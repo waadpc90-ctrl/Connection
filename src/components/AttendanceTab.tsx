@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ClipboardCheck, ExternalLink, RotateCcw } from 'lucide-react';
+import { Camera, ClipboardCheck, ExternalLink, ListChecks, RotateCcw } from 'lucide-react';
 import { saveClassAttendanceBatch } from '../lib/wisaalService';
 import {
   AttendanceLog,
@@ -12,6 +12,7 @@ import {
   StageId,
   Student,
 } from '../types/wisaal';
+import { AttendanceImageUploadPanel } from './AttendanceImageUploadPanel';
 
 interface AttendanceTabProps {
   uid: string;
@@ -27,6 +28,8 @@ interface AttendanceTabProps {
   onPreviewStagePortal: (stageToken: string) => void;
   onNotify: (kind: 'success' | 'error', message: string) => void;
 }
+
+type AttendanceSubMode = 'manual' | 'photo';
 
 const STATUS_OPTIONS: { value: AttendanceStatus; label: string; activeClass: string }[] = [
   { value: 'present', label: 'حاضر', activeClass: 'bg-emerald-700 text-white border-emerald-700' },
@@ -49,6 +52,7 @@ export function AttendanceTab({
   onPreviewStagePortal,
   onNotify,
 }: AttendanceTabProps) {
+  const [subMode, setSubMode] = useState<AttendanceSubMode>('manual');
   const [selectedClassId, setSelectedClassId] = useState<string>(classrooms[0]?.id || '');
   const [selectedDate, setSelectedDate] = useState<string>(getTodayIso());
   const [statusMap, setStatusMap] = useState<Record<string, AttendanceStatus>>({});
@@ -64,6 +68,8 @@ export function AttendanceTab({
       setSelectedClassId(classrooms[0].id);
     }
   }, [classrooms, selectedClassId]);
+
+  const activeClassroom = classrooms.find((c) => c.id === selectedClassId);
 
   const classStudents = useMemo(
     () =>
@@ -124,7 +130,10 @@ export function AttendanceTab({
     setNoteMap({});
   };
 
-  const handleSaveAttendance = async () => {
+  const persistAttendanceBatch = async (
+    batchStatuses: Record<string, AttendanceStatus>,
+    batchNotes: Record<string, string>
+  ) => {
     if (classStudents.length === 0) return;
     setSaving(true);
     try {
@@ -136,8 +145,8 @@ export function AttendanceTab({
         attendanceLogs,
         gradeEntries,
         selectedDate,
-        statusMap,
-        noteMap
+        batchStatuses,
+        batchNotes
       );
       onNotify('success', 'تم اعتماد الحضور وإرسال الإشعارات.');
     } catch {
@@ -145,6 +154,10 @@ export function AttendanceTab({
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSaveAttendance = async () => {
+    await persistAttendanceBatch(statusMap, noteMap);
   };
 
   if (classrooms.length === 0) {
@@ -157,8 +170,61 @@ export function AttendanceTab({
 
   return (
     <div className="space-y-5">
-      <div className="bg-white border border-slate-200/80 rounded-xl p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <div className="grid grid-cols-2 gap-3 flex-1 max-w-md">
+      <div className="bg-white border border-slate-200/80 rounded-xl p-4 sm:p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setSubMode('manual')}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap ${
+                subMode === 'manual'
+                  ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900 font-medium'
+              }`}
+            >
+              <ListChecks className="w-3.5 h-3.5 text-emerald-700" />
+              <span>يدوي</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSubMode('photo')}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap ${
+                subMode === 'photo'
+                  ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900 font-medium'
+              }`}
+            >
+              <Camera className="w-3.5 h-3.5 text-emerald-700" />
+              <span>من صورة</span>
+            </button>
+          </div>
+
+          {subMode === 'manual' && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSetAllPresent}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>الكل حاضر</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveAttendance}
+                disabled={saving || classStudents.length === 0}
+                className="inline-flex items-center gap-2 px-5 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap"
+              >
+                <ClipboardCheck className="w-4 h-4" />
+                <span>{saving ? 'جاري الحفظ...' : 'اعتماد وإشعار'}</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 max-w-md">
           <select
             value={selectedClassId}
             onChange={(e) => setSelectedClassId(e.target.value)}
@@ -180,29 +246,33 @@ export function AttendanceTab({
             className="w-full px-3 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
           />
         </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleSetAllPresent}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>الكل حاضر</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleSaveAttendance}
-            disabled={saving || classStudents.length === 0}
-            className="inline-flex items-center gap-2 px-5 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap"
-          >
-            <ClipboardCheck className="w-4 h-4" />
-            <span>{saving ? 'جاري الحفظ...' : 'اعتماد وإشعار'}</span>
-          </button>
-        </div>
       </div>
 
+      {subMode === 'photo' && (
+        <AttendanceImageUploadPanel
+          sectionName={activeClassroom?.name || 'الشعبة'}
+          sectionStudents={classStudents}
+          onDetectedDate={(isoDate) => {
+            setSelectedDate(isoDate);
+            onNotify('success', 'تم تحديث التاريخ.');
+          }}
+          onApplyToManual={(extractedStatuses, extractedNotes) => {
+            setStatusMap(extractedStatuses);
+            setNoteMap(extractedNotes);
+            setSubMode('manual');
+            onNotify('success', 'تم تعبئة قائمة الحضور للمراجعة.');
+          }}
+          onPublishExtracted={async (extractedStatuses, extractedNotes) => {
+            setStatusMap(extractedStatuses);
+            setNoteMap(extractedNotes);
+            await persistAttendanceBatch(extractedStatuses, extractedNotes);
+            setSubMode('manual');
+          }}
+          onNotify={onNotify}
+        />
+      )}
+
+      {subMode === 'manual' && (
       <section className="bg-white border border-slate-200/80 rounded-xl overflow-hidden">
         <div className="px-5 py-3.5 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-3">
           <h2 className="font-display text-sm sm:text-base font-bold text-slate-900">
@@ -291,6 +361,7 @@ export function AttendanceTab({
           </div>
         )}
       </section>
+      )}
 
       {savedAlertsForSelection.length > 0 && (
         <section className="bg-white border border-slate-200/80 rounded-xl p-5">

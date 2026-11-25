@@ -335,6 +335,180 @@ async function startServer() {
     }
   });
 
+  app.post('/api/extract-attendance', async (req: Request, res: Response) => {
+    const caller = await verifyFirebaseBearerToken(req);
+    if (!caller) {
+      res.status(401).json({ error: 'يرجى تسجيل الدخول بحساب إدارة موثق أولاً.' });
+      return;
+    }
+
+    const body = req.body as {
+      imageBase64?: unknown;
+      mimeType?: unknown;
+      sectionStudents?: unknown;
+    };
+
+    if (
+      typeof body.imageBase64 !== 'string' ||
+      body.imageBase64.length < 32 ||
+      body.imageBase64.length > MAX_BASE64_LENGTH
+    ) {
+      res.status(400).json({ error: 'الصورة غير صالحة أو يتجاوز حجمها الحد المسموح.' });
+      return;
+    }
+
+    if (typeof body.mimeType !== 'string' || !ALLOWED_MIME_TYPES.has(body.mimeType)) {
+      res.status(400).json({ error: 'اختر صورة بصيغة JPG أو PNG أو WebP.' });
+      return;
+    }
+
+    const rawStudents = Array.isArray(body.sectionStudents) ? body.sectionStudents.slice(0, 80) : [];
+    const sectionStudents: SectionStudentInput[] = rawStudents
+      .filter(
+        (s): s is SectionStudentInput =>
+          typeof s === 'object' &&
+          s !== null &&
+          typeof (s as SectionStudentInput).id === 'string' &&
+          typeof (s as SectionStudentInput).fullName === 'string'
+      )
+      .map((s) => ({
+        id: s.id.slice(0, 128),
+        fullName: s.fullName.trim().slice(0, 100),
+        studentCode: typeof s.studentCode === 'string' ? s.studentCode.trim().slice(0, 32) : '',
+      }));
+
+    const validStudentIds = new Set(sectionStudents.map((s) => s.id));
+
+    const ai = getAiClient();
+    if (!ai) {
+      res.status(503).json({
+        error: 'خدمة تحليل الصور غير مفعّلة حالياً على الخادم.',
+      });
+      return;
+    }
+
+    try {
+      const rosterLines = sectionStudents
+        .map((s, idx) => `${idx + 1}. id="${s.id}" | name="${s.fullName}" | code="${s.studentCode}"`)
+        .join('\n');
+
+      const promptText = [
+        'أنت خبير دقيق في قراءة أوراق وكشوف الحضور والغياب المدرسية العربية (المطبوعة أو المكتوبة بخط اليد).',
+        'استخرج أسماء الطلاب وحالة حضور كل طالب من الصورة المرفقة.',
+        'قائمة طلاب الشعبة المسجلين في النظام:',
+        rosterLines || '(لا يوجد طلاب مسجلون حالياً)',
+        'التعليمات الصارمة:',
+        '1. إذا كانت الورقة تحتوي قائمة بأسماء الغائبين فقط (ورقة غيابات) بدون عمود حالة، فاجعل status لكل اسم مذكور "absent" ما لم يُكتب بجانبه متأخر ("late") أو مجاز/بعذر ("excused").',
+        '2. إذا كانت الورقة جدول حضور كامل، فاستخرج الحالة بدقة: غ / × / غائب = "absent"، ت / م / متأخر = "late"، ع / مجاز / إجازة / بعذر = "excused"، ✓ / ح / حاضر = "present".',
+        '3. طابق كل اسم مستخرج مع أقرب طالب في قائمة الشعبة وأعد معرّفه الدقيق في matchedStudentId، وإذا لم يطابق أياً منهم فأعد "".',
+        '4. إذا ظهر تاريخ واضح في ترويسة الورقة فأعده بصيغة YYYY-MM-DD في detectedDate (حوّل الأرقام العربية ٠-٩ إلى 0-9)، وإلا أعد "".',
+        '5. ضع أي ملاحظة مكتوبة بجانب الاسم (مثل سبب الغياب أو وقت التأخر) في note، وإلا أعد "".',
+        '6. حدد مستوى الثقة confidence بـ high أو medium أو low.',
+      ].join('\n');
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: body.mimeType,
+                data: body.imageBase64,
+              },
+            },
+            { text: promptText },
+          ],
+        },
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              detectedDate: {
+                type: Type.STRING,
+                description: 'Date in YYYY-MM-DD format if clearly visible, otherwise empty string.',
+              },
+              rows: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    extractedName: { type: Type.STRING },
+                    matchedStudentId: { type: Type.STRING },
+                    status: {
+                      type: Type.STRING,
+                      enum: ['present', 'absent', 'late', 'excused'],
+                    },
+                    note: { type: Type.STRING },
+                    confidence: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
+                  },
+                  required: ['extractedName', 'matchedStudentId', 'status', 'note', 'confidence'],
+                },
+              },
+            },
+            required: ['detectedDate', 'rows'],
+          },
+        },
+      });
+
+      const rawText = (response.text ?? '{}').trim();
+      const parsed = JSON.parse(rawText) as {
+        detectedDate?: unknown;
+        rows?: unknown[];
+      };
+
+      const rawDate = typeof parsed.detectedDate === 'string' ? parsed.detectedDate.trim() : '';
+      const detectedDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : '';
+
+      const cleanRows = Array.isArray(parsed.rows)
+        ? parsed.rows.slice(0, 80).map((item) => {
+            const r = item as Record<string, unknown>;
+            const rawId = typeof r.matchedStudentId === 'string' ? r.matchedStudentId.trim() : '';
+            const status =
+              r.status === 'present' ||
+              r.status === 'absent' ||
+              r.status === 'late' ||
+              r.status === 'excused'
+                ? r.status
+                : 'absent';
+            const conf =
+              r.confidence === 'high' || r.confidence === 'medium' || r.confidence === 'low'
+                ? r.confidence
+                : 'medium';
+            return {
+              extractedName:
+                typeof r.extractedName === 'string' ? r.extractedName.trim().slice(0, 100) : '',
+              matchedStudentId: validStudentIds.has(rawId) ? rawId : '',
+              status,
+              note: typeof r.note === 'string' ? r.note.trim().slice(0, 200) : '',
+              confidence: conf,
+            };
+          })
+        : [];
+
+      res.json({
+        detectedDate,
+        rows: cleanRows,
+      });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('Extract attendance error:', errMsg);
+      if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+        res.status(429).json({
+          error: 'تم تجاوز حد الطلبات المؤقت. يرجى المحاولة بعد قليل.',
+        });
+        return;
+      }
+      if (errMsg.includes('403') || errMsg.includes('API_KEY_INVALID') || errMsg.includes('400')) {
+        res.status(400).json({
+          error: 'تعذر قراءة الصورة. تحقق من جودة الصورة أو إعدادات الخدمة.',
+        });
+        return;
+      }
+      res.status(500).json({ error: 'تعذر قراءة ورقة الغياب. حاول بصورة أوضح.' });
+    }
+  });
+
   // Public VAPID key for parent browsers to subscribe to external OS Web Push notifications
   app.get('/api/push/public-key', (_req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-store');

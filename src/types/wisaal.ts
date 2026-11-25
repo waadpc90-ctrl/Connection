@@ -246,6 +246,14 @@ export interface ExtractedGradeRow {
   confidence: 'high' | 'medium' | 'low';
 }
 
+export interface ExtractedAttendanceRow {
+  extractedName: string;
+  matchedStudentId: string;
+  status: AttendanceStatus;
+  note: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
 export const FIELD_LIMITS = {
   schoolName: 120,
   phone: 24,
