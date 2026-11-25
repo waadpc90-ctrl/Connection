@@ -1,0 +1,254 @@
+{
+  "entities": {
+    "School": {
+      "title": "School",
+      "description": "School workspace settings with 3 customizable academic stages.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "whatsappNumber": { "type": "string", "maxLength": 24, "pattern": "^[0-9+\\-\\s]*$" },
+        "absenceAlertThreshold": { "type": "number" },
+        "academicYear": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "stageNames": { "type": "object", "description": "Display names for stage_1, stage_2, stage_3" },
+        "stageTokens": { "type": "object", "description": "Unguessable QR capability tokens for stage_1, stage_2, stage_3" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "name", "whatsappNumber", "absenceAlertThreshold", "academicYear", "createdAt", "updatedAt"]
+    },
+    "Classroom": {
+      "title": "Classroom",
+      "description": "A section (شعبة) strictly belonging to one of the 3 school stages.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "schoolId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "stageId": { "type": "string", "enum": ["stage_1", "stage_2", "stage_3"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "stage": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "homeroomTeacher": { "type": "string", "maxLength": 80 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "schoolId", "name", "stage", "homeroomTeacher", "createdAt", "updatedAt"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Private student record containing parent contact PII, scoped to a stage and section.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "schoolId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "stageId": { "type": "string", "enum": ["stage_1", "stage_2", "stage_3"] },
+        "classId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "className": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "fullName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "studentCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "parentName": { "type": "string", "maxLength": 100 },
+        "parentPhone": { "type": "string", "maxLength": 24, "pattern": "^[0-9+\\-\\s]*$" },
+        "passToken": { "type": "string", "minLength": 16, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "schoolId", "classId", "className", "fullName", "studentCode", "parentName", "parentPhone", "passToken", "createdAt", "updatedAt"]
+    },
+    "AttendanceLog": {
+      "title": "AttendanceLog",
+      "description": "Daily stage-isolated attendance record and dispatch status.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "schoolId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "stageId": { "type": "string", "enum": ["stage_1", "stage_2", "stage_3"] },
+        "classId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "date": { "type": "string", "minLength": 10, "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "status": { "type": "string", "enum": ["present", "absent", "late", "excused"] },
+        "note": { "type": "string", "maxLength": 300 },
+        "notifiedViaWhatsapp": { "type": "boolean" },
+        "notifiedAt": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "schoolId", "classId", "studentId", "studentName", "date", "status", "note", "notifiedViaWhatsapp", "notifiedAt", "createdAt", "updatedAt"]
+    },
+    "GradeEntry": {
+      "title": "GradeEntry",
+      "description": "Stage-isolated assessment grade entry for a student in a subject.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "schoolId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "stageId": { "type": "string", "enum": ["stage_1", "stage_2", "stage_3"] },
+        "classId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "subject": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "score": { "type": "number" },
+        "maxScore": { "type": "number" },
+        "date": { "type": "string", "minLength": 10, "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "teacherNote": { "type": "string", "maxLength": 300 },
+        "notifiedViaWhatsapp": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "schoolId", "classId", "studentId", "studentName", "subject", "title", "score", "maxScore", "date", "teacherNote", "notifiedViaWhatsapp", "createdAt", "updatedAt"]
+    },
+    "StudentPass": {
+      "title": "StudentPass",
+      "description": "PII-free live parent pass with aggregated multi-subject summary and instant alert banner.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "schoolId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "stageId": { "type": "string", "enum": ["stage_1", "stage_2", "stage_3"] },
+        "stageName": { "type": "string", "maxLength": 60 },
+        "schoolName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "schoolWhatsapp": { "type": "string", "maxLength": 24, "pattern": "^[0-9+\\-\\s]*$" },
+        "academicYear": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "studentDisplayName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "studentCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "className": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "absenceAlertThreshold": { "type": "number" },
+        "todayDate": { "type": "string", "maxLength": 10 },
+        "todayStatus": { "type": "string", "enum": ["present", "absent", "late", "excused", "none"] },
+        "totalAbsent": { "type": "number" },
+        "totalLate": { "type": "number" },
+        "totalExcused": { "type": "number" },
+        "averagePercent": { "type": "number" },
+        "subjectsCount": { "type": "number" },
+        "totalScoreSum": { "type": "number" },
+        "totalMaxScoreSum": { "type": "number" },
+        "subjectSummaries": { "type": "array" },
+        "latestAlert": { "type": "object" },
+        "recentAttendance": { "type": "array" },
+        "recentGrades": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "schoolId", "studentId", "schoolName", "schoolWhatsapp", "academicYear", "studentDisplayName", "studentCode", "className", "absenceAlertThreshold", "todayDate", "todayStatus", "totalAbsent", "totalLate", "totalExcused", "averagePercent", "recentAttendance", "recentGrades", "createdAt", "updatedAt"]
+    },
+    "StagePortal": {
+      "title": "StagePortal",
+      "description": "PII-free stage QR portal receiving instant real-time collective notifications for all sections of a stage.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "schoolId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "stageId": { "type": "string", "enum": ["stage_1", "stage_2", "stage_3"] },
+        "stageName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "schoolName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "academicYear": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "sections": { "type": "array" },
+        "latestBroadcast": { "type": "object" },
+        "broadcasts": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "schoolId", "stageId", "stageName", "schoolName", "academicYear", "sections", "broadcasts", "createdAt", "updatedAt"]
+    },
+    "ParentAcknowledgement": {
+      "title": "ParentAcknowledgement",
+      "description": "Verified parent read-receipt or absence excuse note attached to a student pass.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "schoolOwnerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "type": { "type": "string", "enum": ["seen", "excuse"] },
+        "targetDate": { "type": "string", "maxLength": 10 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 400 },
+        "senderLabel": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "schoolStatus": { "type": "string", "enum": ["pending", "reviewed"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "schoolOwnerId", "studentId", "type", "targetDate", "message", "senderLabel", "schoolStatus", "createdAt", "updatedAt"]
+    },
+    "MediaAttachment": {
+      "title": "MediaAttachment",
+      "description": "Compressed image attachment (JPEG/PNG/WebP data URL <= 380KB) linked to a broadcast or private student message.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "schoolId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "dataUrl": { "type": "string", "minLength": 32, "maxLength": 380000, "pattern": "^data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$" },
+        "caption": { "type": "string", "maxLength": 140 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "schoolId", "dataUrl", "caption", "createdAt"]
+    },
+    "PushSubscription": {
+      "title": "PushSubscription",
+      "description": "Web Push device subscription registered by a parent device to receive external OS notifications even when the site is closed.",
+      "type": "object",
+      "properties": {
+        "schoolOwnerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "scope": { "type": "string", "enum": ["stage", "pass"] },
+        "sectionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "endpoint": { "type": "string", "minLength": 24, "maxLength": 1000, "pattern": "^https://(fcm\\.googleapis\\.com|android\\.googleapis\\.com|updates\\.push\\.services\\.mozilla\\.com|push\\.services\\.mozilla\\.com|web\\.push\\.apple\\.com|[a-z0-9\\-]+\\.push\\.apple\\.com|[a-z0-9\\-]+\\.notify\\.windows\\.com|notify\\.windows\\.com)/.*$" },
+        "p256dh": { "type": "string", "minLength": 16, "maxLength": 200, "pattern": "^[A-Za-z0-9_\\-+/=]+$" },
+        "auth": { "type": "string", "minLength": 8, "maxLength": 100, "pattern": "^[A-Za-z0-9_\\-+/=]+$" },
+        "deviceLabel": { "type": "string", "maxLength": 60 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["schoolOwnerId", "scope", "sectionId", "endpoint", "p256dh", "auth", "deviceLabel", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/schools/{schoolId}": {
+      "schema": { "$ref": "#/entities/School" },
+      "description": "School workspace root document owned by the school administrator."
+    },
+    "/schools/{schoolId}/classrooms/{classId}": {
+      "schema": { "$ref": "#/entities/Classroom" },
+      "description": "Sections belonging to one of the 3 stages of a school."
+    },
+    "/schools/{schoolId}/students/{studentId}": {
+      "schema": { "$ref": "#/entities/Student" },
+      "description": "Private student records including parent contact PII."
+    },
+    "/schools/{schoolId}/attendanceLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AttendanceLog" },
+      "description": "Stage-separated daily attendance logs and notification dispatch status."
+    },
+    "/schools/{schoolId}/gradeEntries/{gradeId}": {
+      "schema": { "$ref": "#/entities/GradeEntry" },
+      "description": "Stage-separated subject assessment grade records."
+    },
+    "/passes/{passToken}": {
+      "schema": { "$ref": "#/entities/StudentPass" },
+      "description": "PII-free live parent passes with multi-subject summary and instant alert banner."
+    },
+    "/passes/{passToken}/acknowledgements/{ackId}": {
+      "schema": { "$ref": "#/entities/ParentAcknowledgement" },
+      "description": "Verified parent read-receipts and absence excuse notes."
+    },
+    "/passes/{passToken}/media/{mediaId}": {
+      "schema": { "$ref": "#/entities/MediaAttachment" },
+      "description": "Private image attachments sent exclusively to a specific student's parent pass."
+    },
+    "/passes/{passToken}/pushSubscriptions/{subId}": {
+      "schema": { "$ref": "#/entities/PushSubscription" },
+      "description": "Web Push subscriptions for a specific student's parent devices to receive external alerts."
+    },
+    "/stagePortals/{stageToken}": {
+      "schema": { "$ref": "#/entities/StagePortal" },
+      "description": "PII-free stage QR portals delivering instant in-website collective broadcasts to all sections of a stage."
+    },
+    "/stagePortals/{stageToken}/media/{mediaId}": {
+      "schema": { "$ref": "#/entities/MediaAttachment" },
+      "description": "Compressed image attachments linked to collective stage or section broadcasts."
+    },
+    "/stagePortals/{stageToken}/pushSubscriptions/{subId}": {
+      "schema": { "$ref": "#/entities/PushSubscription" },
+      "description": "Web Push subscriptions for parents who scanned a stage QR code to receive external notifications."
+    }
+  }
+}

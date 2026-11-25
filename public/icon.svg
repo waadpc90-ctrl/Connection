@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#047857" />
+  <rect x="44" y="44" width="424" height="424" rx="84" fill="none" stroke="#34d399" stroke-opacity="0.32" stroke-width="8" />
+  <g fill="#ffffff">
+    <!-- Clean geometric bell & scholar crest -->
+    <path d="M256 120c-12 0-22 10-22 22v8c-52 10-86 55-86 112v62l-26 26c-8 8-2 22 10 22h248c12 0 18-14 10-22l-26-26v-62c0-57-34-102-86-112v-8c0-12-10-22-22-22z" />
+    <path d="M218 390c6 22 21 36 38 36s32-14 38-36h-76z" fill="#a7f3d0" />
+  </g>
+</svg>
