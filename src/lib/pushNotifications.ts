@@ -123,9 +123,9 @@ export async function registerWisaalServiceWorker(): Promise<ServiceWorkerRegist
   if (!('serviceWorker' in navigator)) {
     throw new Error('المتصفح لا يدعم خدمة الإشعارات الخلفية.');
   }
-  const existing = await navigator.serviceWorker.getRegistration('/');
+  const existing = await navigator.serviceWorker.getRegistration('./');
   if (!existing) {
-    await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    await navigator.serviceWorker.register('./sw.js', { scope: './' });
   }
   return navigator.serviceWorker.ready;
 }

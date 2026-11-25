@@ -19,7 +19,7 @@ interface LandingViewProps {
   authError: string | null;
 }
 
-const HERO_IMAGE_PATH = '/src/assets/images/hero_wisaal_school_1795623756360.jpg';
+const HERO_IMAGE_PATH = './src/assets/images/hero_wisaal_school_1795623756360.jpg';
 
 export function LandingView({
   onSignIn,
