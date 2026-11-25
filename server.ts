@@ -1,5 +1,6 @@
 import 'dotenv/config';
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -17,16 +18,28 @@ const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_BASE64_LENGTH = 9_500_000; // ~7MB binary image
 const MAX_PUSH_RECIPIENTS = 200;
 
-// Web Push VAPID setup: prefer configured server-side env secrets; fall back to ephemeral in-memory keys in preview
+// Web Push VAPID setup: prefer configured server-side env secrets; fall back safely to ephemeral keys
 const envVapidPublic = (process.env.VAPID_PUBLIC_KEY || '').trim();
 const envVapidPrivate = (process.env.VAPID_PRIVATE_KEY || '').trim();
-const vapidSubject = (process.env.VAPID_SUBJECT || 'mailto:notifications@wisaal.app').trim();
-const hasPersistentVapid = Boolean(envVapidPublic && envVapidPrivate);
-const activeVapidKeys = hasPersistentVapid
+const rawSubject = (process.env.VAPID_SUBJECT || 'mailto:notifications@wisaal.app').trim();
+const vapidSubject =
+  rawSubject.startsWith('mailto:') || rawSubject.startsWith('https://')
+    ? rawSubject
+    : 'mailto:notifications@wisaal.app';
+
+let hasPersistentVapid = Boolean(envVapidPublic && envVapidPrivate);
+let activeVapidKeys = hasPersistentVapid
   ? { publicKey: envVapidPublic, privateKey: envVapidPrivate }
   : webpush.generateVAPIDKeys();
 
-webpush.setVapidDetails(vapidSubject, activeVapidKeys.publicKey, activeVapidKeys.privateKey);
+try {
+  webpush.setVapidDetails(vapidSubject, activeVapidKeys.publicKey, activeVapidKeys.privateKey);
+} catch (err) {
+  console.warn('Invalid VAPID configuration in environment; falling back to ephemeral VAPID keys:', err);
+  hasPersistentVapid = false;
+  activeVapidKeys = webpush.generateVAPIDKeys();
+  webpush.setVapidDetails('mailto:notifications@wisaal.app', activeVapidKeys.publicKey, activeVapidKeys.privateKey);
+}
 
 const ALLOWED_PUSH_EXACT_HOSTS = new Set([
   'fcm.googleapis.com',
