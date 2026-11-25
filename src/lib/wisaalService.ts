@@ -1929,15 +1929,15 @@ export async function seedDemoSchoolData(uid: string, school: School): Promise<v
 
       const welcomeBroadcast = makeStageBroadcast(
         'announcement',
-        `تم تفعيل بوابة الإشعارات الفورية — ${stageNames[sid]}`,
-        `أولياء الأمور الكرام في ${stageNames[sid]}، تصل جميع إعلانات الشعب ودرجات المواد وتنبيهات الغياب هنا بشكل فوري ومباشر عبر الموقع دون الحاجة لواتساب.`,
+        `بوابة ${stageNames[sid]}`,
+        `تصل هنا جميع الإعلانات وتنبيهات الغياب والدرجات بشكل فوري ومباشر.`,
         'all',
         `جميع شعب ${stageNames[sid]}`
       );
       const gradesBroadcast = makeStageBroadcast(
         'grades',
-        `نشر خلاصة درجات الشهر الأول — ${stageNames[sid]}`,
-        `تم رصد وتجميع درجات جميع المواد لشعب ${stageNames[sid]} في بطاقات الخلاصة الحية لكل طالب.`,
+        `درجات الشهر الأول — ${stageNames[sid]}`,
+        `تم تحديث درجات المواد لشعب ${stageNames[sid]}.`,
         'all',
         `جميع شعب ${stageNames[sid]}`
       );

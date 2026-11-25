@@ -79,9 +79,24 @@ export default function App() {
       await signInWithPopup(auth, googleProvider);
       notify('success', 'تم تسجيل الدخول بنجاح.');
     } catch (err) {
+      const code = (err as { code?: string })?.code || '';
       const msg = err instanceof Error ? err.message : '';
-      if (!msg.includes('popup-closed-by-user')) {
-        setAuthError('تعذر إتمام تسجيل الدخول عبر Google. تأكد من السماح بالنوافذ المنبثقة ثم أعد المحاولة.');
+      if (code === 'auth/popup-closed-by-user' || msg.includes('popup-closed-by-user')) {
+        // User intentionally dismissed the Google sign-in window
+      } else if (code === 'auth/unauthorized-domain' || msg.includes('unauthorized-domain')) {
+        setAuthError(
+          `هذا النطاق (${window.location.hostname}) غير مضاف بعد في النطاقات المصرح بها في Firebase Authentication. أضفه من إعدادات Firebase ثم أعد المحاولة.`
+        );
+      } else if (code === 'auth/popup-blocked' || msg.includes('popup-blocked')) {
+        setAuthError(
+          'قام المتصفح بحظر نافذة تسجيل الدخول المنبثقة. اسمح بالنوافذ المنبثقة لهذا الموقع من إعدادات المتصفح ثم أعد المحاولة.'
+        );
+      } else if (code === 'auth/network-request-failed' || msg.includes('network-request-failed')) {
+        setAuthError('تعذر الاتصال بخادم المصادقة. تحقق من اتصال الإنترنت ثم أعد المحاولة.');
+      } else {
+        setAuthError(
+          'تعذر إتمام تسجيل الدخول عبر Google. تأكد من السماح بالنوافذ المنبثقة وتصريح النطاق في Firebase ثم أعد المحاولة.'
+        );
       }
     } finally {
       setSigningIn(false);

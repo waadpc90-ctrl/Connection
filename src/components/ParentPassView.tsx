@@ -1,32 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { User } from 'firebase/auth';
-import {
-  collection,
-  doc,
-  onSnapshot,
-  query,
-  where,
-} from 'firebase/firestore';
-import { QRCodeSVG } from 'qrcode.react';
+import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import {
   AlertCircle,
   ArrowRight,
   BellRing,
-  CalendarDays,
   CheckCircle2,
   Clock,
-  FileCheck2,
-  Layers,
   Printer,
   Send,
   ShieldAlert,
-  TrendingUp,
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import {
-  buildPassUrl,
-  submitParentAcknowledgement,
-} from '../lib/wisaalService';
+import { submitParentAcknowledgement } from '../lib/wisaalService';
 import {
   classifyPercentage,
   formatArabicDate,
@@ -69,7 +55,6 @@ export function ParentPassView({
 
   const lastSeenAlertIdRef = useRef<string | null>(null);
 
-  // Load live pass document by exact capability token (zero login required to read)
   useEffect(() => {
     if (demoPass) {
       setPassData(demoPass);
@@ -106,8 +91,6 @@ export function ParentPassView({
           if (nextPass.latestAlert?.id) {
             lastSeenAlertIdRef.current = nextPass.latestAlert.id;
           }
-          // Remember this parent's child pass on their own device so the Stage QR Portal
-          // can offer a private 1-tap shortcut back to their child's summary card.
           try {
             window.localStorage.setItem(
               'wisaal_saved_child_pass',
@@ -136,7 +119,6 @@ export function ParentPassView({
     return () => unsub();
   }, [passToken, demoPass, onNotify]);
 
-  // Subscribe to parent's own acknowledgements if signed in (or school owner's view)
   useEffect(() => {
     if (!passData || demoPass || !user) {
       setAcks([]);
@@ -152,11 +134,12 @@ export function ParentPassView({
     const unsub = onSnapshot(
       q,
       (snap) => {
-        const list = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<ParentAcknowledgement, 'id'>),
-        }));
-        setAcks(list);
+        setAcks(
+          snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<ParentAcknowledgement, 'id'>),
+          }))
+        );
       },
       (err) => {
         handleFirestoreError(err, OperationType.LIST, `passes/${passData.passToken}/acknowledgements`);
@@ -168,11 +151,10 @@ export function ParentPassView({
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#F8F9F7] py-10 px-4">
+      <div className="min-h-screen bg-[#F7F8F7] py-10 px-4">
         <div className="max-w-2xl mx-auto space-y-4">
-          <div className="h-24 bg-white border border-slate-200 rounded-xl animate-pulse" />
-          <div className="h-36 bg-white border border-slate-200 rounded-xl animate-pulse" />
-          <div className="h-64 bg-white border border-slate-200 rounded-xl animate-pulse" />
+          <div className="h-28 bg-white border border-slate-200 rounded-xl animate-pulse" />
+          <div className="h-48 bg-white border border-slate-200 rounded-xl animate-pulse" />
         </div>
       </div>
     );
@@ -180,25 +162,21 @@ export function ParentPassView({
 
   if (notFound || !passData) {
     return (
-      <div className="min-h-screen bg-[#F8F9F7] flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white border border-slate-200 rounded-xl p-8 text-center">
-          <div className="w-12 h-12 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center mx-auto mb-4">
-            <ShieldAlert className="w-6 h-6" />
-          </div>
-          <h1 className="font-display text-xl font-bold text-slate-900 mb-2">
-            تعذر العثور على بطاقة الطالب
+      <div className="min-h-screen bg-[#F7F8F7] flex items-center justify-center p-6">
+        <div className="max-w-sm w-full bg-white border border-slate-200 rounded-xl p-8 text-center">
+          <ShieldAlert className="w-8 h-8 text-slate-500 mx-auto mb-3" />
+          <h1 className="font-display text-lg font-bold text-slate-900 mb-2">
+            البطاقة غير متوفرة
           </h1>
-          <p className="text-sm text-slate-600 leading-relaxed mb-6">
-            تأكد من صحة الرابط أو اطلب من إدارة المدرسة إعادة إرسال رابط بطاقة المتابعة الحية.
-          </p>
+          <p className="text-sm text-slate-600 mb-6">تأكد من صحة رابط الطالب.</p>
           {onExit && (
             <button
               type="button"
               onClick={onExit}
-              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors"
+              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors"
             >
               <ArrowRight className="w-4 h-4" />
-              <span>العودة للرئيسية</span>
+              <span>الرئيسية</span>
             </button>
           )}
         </div>
@@ -207,7 +185,6 @@ export function ParentPassView({
   }
 
   const todayMeta = getAttendanceMeta(passData.todayStatus);
-  const passUrl = demoPass ? window.location.origin : buildPassUrl(passData.passToken);
   const needsAttendanceAlert = passData.totalAbsent >= passData.absenceAlertThreshold;
   const subjectSummaries = passData.subjectSummaries || [];
   const overallRating = classifyPercentage(passData.averagePercent);
@@ -222,17 +199,13 @@ export function ParentPassView({
         studentId: passData.studentId,
         type: ackType,
         targetDate: ackType === 'excuse' ? excuseDate : passData.todayDate,
-        message:
-          messageText.trim() ||
-          (ackType === 'seen'
-            ? 'تم الاطلاع على خلاصة الدرجات والحضور.'
-            : 'عذر غياب مرسل من ولي الأمر.'),
+        message: messageText.trim() || (ackType === 'seen' ? 'تم الاطلاع.' : 'عذر غياب.'),
         senderLabel: senderLabel.trim() || 'ولي الأمر',
         schoolStatus: 'pending',
       };
       setAcks((prev) => [localAck, ...prev]);
       setMessageText('');
-      onNotify('success', 'تم تسجيل تأكيد الاطلاع في المعاينة النموذجية.');
+      onNotify('success', 'تم التسجيل.');
       return;
     }
 
@@ -246,45 +219,35 @@ export function ParentPassView({
       await submitParentAcknowledgement(passData, user.uid, {
         type: ackType,
         targetDate: ackType === 'excuse' ? excuseDate : passData.todayDate,
-        message:
-          messageText.trim() ||
-          (ackType === 'seen'
-            ? 'تم الاطلاع على خلاصة الدرجات والحضور بنجاح.'
-            : 'أرجو قبول عذر الغياب لهذا اليوم.'),
+        message: messageText.trim() || (ackType === 'seen' ? 'تم الاطلاع.' : 'عذر غياب.'),
         senderLabel: senderLabel.trim() || user.displayName || 'ولي الأمر',
       });
       setMessageText('');
-      onNotify(
-        'success',
-        ackType === 'excuse'
-          ? 'تم إرسال عذر الغياب لإدارة المدرسة.'
-          : 'تم تسجيل تأكيد الاطلاع بنجاح.'
-      );
+      onNotify('success', ackType === 'excuse' ? 'تم إرسال العذر.' : 'تم تأكيد الاطلاع.');
     } catch {
-      onNotify('error', 'تعذر إرسال التوثيق الآن. تأكد من اتصالك بالإنترنت ثم حاول مجدداً.');
+      onNotify('error', 'تعذر الإرسال، حاول مجدداً.');
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F9F7] text-slate-900 pb-16">
-      {/* Compact Top Utility Strip */}
-      <div className="no-print sticky top-0 z-20 bg-[#F8F9F7]/95 backdrop-blur-sm border-b border-slate-200">
+    <div className="min-h-screen bg-[#F7F8F7] text-slate-900 pb-14">
+      <header className="no-print sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-slate-200/80">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2.5 min-w-0">
             {onExit && (
               <button
                 type="button"
                 onClick={onExit}
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors whitespace-nowrap shrink-0"
+                className="p-2 -mr-2 text-slate-600 hover:text-slate-900 rounded-lg transition-colors shrink-0"
+                aria-label="رجوع"
               >
-                <ArrowRight className="w-4 h-4" />
-                <span>رجوع</span>
+                <ArrowRight className="w-5 h-5" />
               </button>
             )}
-            <span className="font-display font-bold text-slate-900 truncate">
-              {demoPass ? 'معاينة بطاقة الخلاصة لولي الأمر' : 'بطاقة وصال الحية'}
+            <span className="font-display font-bold text-slate-900 text-sm sm:text-base truncate">
+              {passData.studentDisplayName}
             </span>
           </div>
 
@@ -293,58 +256,29 @@ export function ParentPassView({
             <button
               type="button"
               onClick={() => window.print()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0"
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>طباعة الخلاصة</span>
+              <span>طباعة</span>
             </button>
           </div>
         </div>
-      </div>
+      </header>
 
-      <main className="max-w-2xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
-        {demoPass && (
-          <div className="no-print p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <span>
-              هذه معاينة حية لبطاقة الخلاصة الشاملة التي تصل ولي الأمر فور رفع كشف درجات الشعبة أو
-              تسجيل الغياب.
-            </span>
-            {onExit && (
-              <button
-                type="button"
-                onClick={onExit}
-                className="text-xs font-semibold text-emerald-800 hover:text-emerald-950 underline whitespace-nowrap shrink-0"
-              >
-                العودة للمنصة
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Instant Live In-Website School Alert Banner */}
+      <main className="max-w-2xl mx-auto px-4 sm:px-6 pt-5 space-y-5">
+        {/* Latest Alert */}
         {passData.latestAlert && (
           <section
-            className={`rounded-xl p-5 flex items-start gap-3.5 text-white ${
+            className={`rounded-xl p-5 flex items-start gap-3 text-white ${
               passData.latestAlert.kind === 'urgent' ? 'bg-rose-950' : 'bg-slate-900'
             }`}
           >
-            <div
-              className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                passData.latestAlert.kind === 'urgent'
-                  ? 'bg-rose-500/20 text-rose-200'
-                  : 'bg-emerald-600/20 text-emerald-300'
+            <BellRing
+              className={`w-4 h-4 shrink-0 mt-1 ${
+                passData.latestAlert.kind === 'urgent' ? 'text-rose-300' : 'text-emerald-400'
               }`}
-            >
-              <BellRing className="w-4 h-4" />
-            </div>
+            />
             <div className="min-w-0 flex-1">
-              <p
-                className={`text-[11px] font-medium mb-0.5 ${
-                  passData.latestAlert.kind === 'urgent' ? 'text-rose-200' : 'text-emerald-300'
-                }`}
-              >
-                إشعار فوري عبر الموقع من {passData.schoolName}
-              </p>
               <p className="font-display text-sm sm:text-base font-bold leading-snug">
                 {passData.latestAlert.title}
               </p>
@@ -367,32 +301,25 @@ export function ParentPassView({
           </section>
         )}
 
-        {/* School & Student Identity Header */}
-        <section className="bg-white border border-slate-200 rounded-xl p-6">
-          <div className="flex items-start justify-between gap-4 pb-5 border-b border-slate-200">
-            <div>
-              <p className="text-xs font-medium text-emerald-800 mb-1">
-                {passData.schoolName} · {passData.academicYear}
-              </p>
-              <h1 className="font-display text-2xl font-bold text-slate-900">
-                {passData.studentDisplayName}
-              </h1>
-              <p className="text-sm text-slate-600 mt-1">
-                {passData.stageName ? `${passData.stageName} · ` : ''}
-                {passData.className} · رمز الطالب:{' '}
-                <span className="font-mono tabular-nums text-slate-800">{passData.studentCode}</span>
-              </p>
-            </div>
-
-            <div className="hidden sm:block p-2 border border-slate-200 rounded-lg bg-white shrink-0">
-              <QRCodeSVG value={passUrl} size={64} level="M" />
-            </div>
+        {/* Student Overview & Today Status */}
+        <section className="bg-white border border-slate-200/80 rounded-xl p-5 sm:p-6">
+          <div className="pb-4 border-b border-slate-100">
+            <p className="text-xs text-slate-500">
+              {passData.schoolName} · {passData.academicYear}
+            </p>
+            <h1 className="font-display text-2xl font-bold text-slate-900 mt-1">
+              {passData.studentDisplayName}
+            </h1>
+            <p className="text-xs text-slate-600 mt-1">
+              {passData.stageName ? `${passData.stageName} · ` : ''}
+              {passData.className} ·{' '}
+              <span className="font-mono tabular-nums">{passData.studentCode}</span>
+            </p>
           </div>
 
-          {/* Today's Status Banner — Dual-coded */}
-          <div className="pt-5">
+          <div className="py-4">
             <div
-              className={`rounded-lg p-4 border flex items-start gap-3 ${
+              className={`rounded-lg p-3.5 border flex items-center gap-3 ${
                 todayMeta.tone === 'emerald'
                   ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
                   : todayMeta.tone === 'rose'
@@ -405,12 +332,12 @@ export function ParentPassView({
               }`}
             >
               {todayMeta.tone === 'emerald' ? (
-                <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
+                <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0" />
               ) : todayMeta.tone === 'amber' ? (
-                <Clock className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                <Clock className="w-5 h-5 text-amber-700 shrink-0" />
               ) : (
                 <AlertCircle
-                  className={`w-5 h-5 shrink-0 mt-0.5 ${
+                  className={`w-5 h-5 shrink-0 ${
                     todayMeta.tone === 'rose'
                       ? 'text-rose-700'
                       : todayMeta.tone === 'sky'
@@ -419,40 +346,37 @@ export function ParentPassView({
                   }`}
                 />
               )}
-              <div className="min-w-0">
-                <p className="text-xs text-slate-600 mb-0.5">
-                  آخر تحديث للحضور ({passData.stageName || 'المرحلة الحالية'}) ·{' '}
-                  {formatArabicDate(passData.todayDate)}
-                </p>
-                <p className="font-display text-base font-bold">{todayMeta.label}</p>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-display text-sm font-bold">{todayMeta.label}</p>
+                  <span className="text-[11px] opacity-75">
+                    {formatArabicDate(passData.todayDate)}
+                  </span>
+                </div>
                 {passData.recentAttendance[0]?.note && (
-                  <p className="text-xs mt-1 opacity-90">
-                    ملاحظة المدرسة: {passData.recentAttendance[0].note}
-                  </p>
+                  <p className="text-xs mt-0.5 opacity-85">{passData.recentAttendance[0].note}</p>
                 )}
               </div>
             </div>
 
             {needsAttendanceAlert && (
-              <div className="mt-3 p-3.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-center gap-2.5">
+              <div className="mt-3 p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-rose-700 shrink-0" />
                 <span>
-                  تنبيه متابعة: بلغ مجموع الغياب بدون عذر{' '}
+                  بلغ الغياب{' '}
                   <strong className="font-mono tabular-nums">{passData.totalAbsent}</strong> أيام
-                  (حد المتابعة المعتمد {passData.absenceAlertThreshold} أيام).
                 </span>
               </div>
             )}
           </div>
 
-          {/* 4-Column Executive Metrics Strip */}
-          <div className="mt-5 pt-5 border-t border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-y-4 sm:divide-x sm:divide-x-reverse divide-slate-200 text-center">
+          <div className="pt-4 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-y-4 sm:divide-x sm:divide-x-reverse divide-slate-100 text-center">
             <div className="px-2">
               <p className="font-mono tabular-nums text-xl font-bold text-emerald-800">
                 {passData.recentGrades.length > 0 ? `${passData.averagePercent}%` : '—'}
               </p>
-              <p className="text-xs text-slate-600 mt-0.5">
-                المعدل ({passData.recentGrades.length > 0 ? overallRating.label : 'غير مرصود'})
+              <p className="text-xs text-slate-500 mt-0.5">
+                {passData.recentGrades.length > 0 ? overallRating.label : 'المعدل'}
               </p>
             </div>
             <div className="px-2">
@@ -461,107 +385,81 @@ export function ParentPassView({
                   ? `${passData.totalScoreSum ?? 0}/${passData.totalMaxScoreSum}`
                   : '—'}
               </p>
-              <p className="text-xs text-slate-600 mt-0.5">
-                المجموع ({passData.subjectsCount ?? subjectSummaries.length} مواد)
-              </p>
+              <p className="text-xs text-slate-500 mt-0.5">المجموع</p>
             </div>
             <div className="px-2">
               <p className="font-mono tabular-nums text-xl font-bold text-rose-700">
                 {passData.totalAbsent}
               </p>
-              <p className="text-xs text-slate-600 mt-0.5">أيام الغياب</p>
+              <p className="text-xs text-slate-500 mt-0.5">الغياب</p>
             </div>
             <div className="px-2">
               <p className="font-mono tabular-nums text-xl font-bold text-amber-700">
                 {passData.totalLate}
               </p>
-              <p className="text-xs text-slate-600 mt-0.5">مرات التأخر</p>
+              <p className="text-xs text-slate-500 mt-0.5">التأخر</p>
             </div>
           </div>
         </section>
 
-        {/* External OS / Background Web Push Notifications Activation for this Student */}
         <ExternalPushBanner
           scope="pass"
           scopeToken={passData.passToken}
           schoolOwnerId={passData.ownerId}
           schoolName={passData.schoolName}
           studentId={passData.studentId}
-          contextLabel={`الطالب ${passData.studentDisplayName}`}
+          contextLabel={passData.studentDisplayName}
           disabledDemo={Boolean(demoPass)}
           onNotify={onNotify}
         />
 
-        {/* Aggregated Multi-Subject Summary Card */}
-        <section className="bg-white border border-slate-200 rounded-xl p-6 print-break-inside-avoid">
-          <div className="flex items-center justify-between gap-4 mb-5">
-            <div className="flex items-center gap-2.5">
-              <Layers className="w-5 h-5 text-emerald-700" />
-              <h2 className="font-display text-lg font-bold text-slate-900">
-                خلاصة درجات جميع المواد
-              </h2>
-            </div>
+        {/* Subject Summaries */}
+        <section className="bg-white border border-slate-200/80 rounded-xl p-5 sm:p-6 print-break-inside-avoid">
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <h2 className="font-display text-base font-bold text-slate-900">المواد والدرجات</h2>
             <span className="text-xs text-slate-500 font-mono tabular-nums">
-              {subjectSummaries.length} مواد مجمّعة
+              {subjectSummaries.length} مواد
             </span>
           </div>
 
           {subjectSummaries.length === 0 ? (
-            <p className="text-sm text-slate-500 py-6 text-center border border-dashed border-slate-200 rounded-lg">
-              لم تُرصد درجات مواد لهذا الطالب بعد. ستُجمع جميع مواده تلقائياً هنا.
-            </p>
+            <p className="text-sm text-slate-500 py-6 text-center">لا توجد درجات مرصودة بعد</p>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            <div className="divide-y divide-slate-100">
               {subjectSummaries.map((sub) => {
                 const rating = classifyPercentage(sub.averagePercent);
                 return (
-                  <div
-                    key={sub.subject}
-                    className="p-4 rounded-lg border border-slate-200 bg-[#F8F9F7]/60"
-                  >
-                    <div className="flex items-baseline justify-between gap-2 mb-2">
-                      <p className="text-sm font-bold text-slate-900">{sub.subject}</p>
-                      <p className="font-mono tabular-nums text-sm font-bold text-slate-900">
-                        {sub.latestScore}
-                        <span className="text-xs font-normal text-slate-500">
-                          /{sub.latestMaxScore}
-                        </span>
-                      </p>
+                  <div key={sub.subject} className="py-3.5 first:pt-0 last:pb-0">
+                    <div className="flex items-baseline justify-between gap-3 mb-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-900">{sub.subject}</p>
+                        {sub.latestNote && (
+                          <p className="text-xs text-slate-500 mt-0.5">{sub.latestNote}</p>
+                        )}
+                      </div>
+                      <div className="text-left shrink-0 font-mono tabular-nums">
+                        <span className="text-sm font-bold text-slate-900">{sub.latestScore}</span>
+                        <span className="text-xs text-slate-400">/{sub.latestMaxScore}</span>
+                      </div>
                     </div>
 
-                    <div className="w-full h-1.5 bg-slate-200/80 rounded-full overflow-hidden mb-2">
-                      <div
-                        className={`h-full rounded-full ${
-                          rating.tier === 'excellent' || rating.tier === 'very-good'
-                            ? 'bg-emerald-600'
-                            : rating.tier === 'good'
-                              ? 'bg-amber-500'
-                              : 'bg-rose-600'
-                        }`}
-                        style={{ width: `${Math.min(100, Math.max(4, sub.averagePercent))}%` }}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between text-xs">
-                      <span
-                        className={
-                          rating.tier === 'excellent' || rating.tier === 'very-good'
-                            ? 'text-emerald-700 font-medium'
-                            : rating.tier === 'good'
-                              ? 'text-amber-700 font-medium'
-                              : 'text-rose-700 font-medium'
-                        }
-                      >
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${
+                            rating.tier === 'excellent' || rating.tier === 'very-good'
+                              ? 'bg-emerald-600'
+                              : rating.tier === 'good'
+                                ? 'bg-amber-500'
+                                : 'bg-rose-600'
+                          }`}
+                          style={{ width: `${Math.min(100, Math.max(4, sub.averagePercent))}%` }}
+                        />
+                      </div>
+                      <span className="text-[11px] font-mono tabular-nums text-slate-500 shrink-0">
                         {sub.averagePercent}% · {rating.label}
                       </span>
-                      <span className="text-slate-500">{formatArabicDate(sub.latestDate)}</span>
                     </div>
-
-                    {sub.latestNote && (
-                      <p className="text-[11px] text-slate-600 mt-1.5 leading-snug">
-                        {sub.latestNote}
-                      </p>
-                    )}
                   </div>
                 );
               })}
@@ -569,97 +467,31 @@ export function ParentPassView({
           )}
         </section>
 
-        {/* Chronological Detailed Grades Log */}
-        {passData.recentGrades.length > 0 && (
-          <section className="bg-white border border-slate-200 rounded-xl p-6 print-break-inside-avoid">
-            <div className="flex items-center justify-between gap-4 mb-5">
-              <div className="flex items-center gap-2.5">
-                <TrendingUp className="w-5 h-5 text-emerald-700" />
-                <h2 className="font-display text-lg font-bold text-slate-900">
-                  سجل الامتحانات والتقييمات التفصيلي
-                </h2>
-              </div>
-              <span className="text-xs text-slate-500 font-mono tabular-nums">
-                {passData.recentGrades.length} تقييمات
-              </span>
-            </div>
-
-            <div className="divide-y divide-slate-200">
-              {passData.recentGrades.map((grade) => {
-                const pct = Math.round((grade.score / Math.max(1, grade.maxScore)) * 100);
-                const rating = classifyPercentage(pct);
-                return (
-                  <div
-                    key={grade.id}
-                    className="py-3.5 first:pt-0 last:pb-0 flex items-start justify-between gap-4"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-900">
-                        {grade.subject} ·{' '}
-                        <span className="font-normal text-slate-700">{grade.title}</span>
-                      </p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {formatArabicDate(grade.date)} ·{' '}
-                        <span
-                          className={
-                            rating.tier === 'excellent' || rating.tier === 'very-good'
-                              ? 'text-emerald-700 font-medium'
-                              : rating.tier === 'good'
-                                ? 'text-amber-700 font-medium'
-                                : 'text-rose-700 font-medium'
-                          }
-                        >
-                          {rating.label}
-                        </span>
-                      </p>
-                      {grade.teacherNote && (
-                        <p className="text-xs text-slate-600 mt-1">{grade.teacherNote}</p>
-                      )}
-                    </div>
-
-                    <div className="text-left shrink-0 font-mono tabular-nums">
-                      <span className="text-sm font-bold text-slate-900">{grade.score}</span>
-                      <span className="text-xs text-slate-500"> / {grade.maxScore}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {/* Attendance Pulse Timeline */}
-        <section className="bg-white border border-slate-200 rounded-xl p-6 print-break-inside-avoid">
-          <div className="flex items-center justify-between gap-4 mb-5">
-            <div className="flex items-center gap-2.5">
-              <CalendarDays className="w-5 h-5 text-emerald-700" />
-              <h2 className="font-display text-lg font-bold text-slate-900">
-                سجل الحضور والغياب
-              </h2>
-            </div>
-            <span className="text-xs text-slate-500">
-              بعذر: <span className="font-mono tabular-nums">{passData.totalExcused}</span>
+        {/* Attendance Log */}
+        <section className="bg-white border border-slate-200/80 rounded-xl p-5 sm:p-6 print-break-inside-avoid">
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <h2 className="font-display text-base font-bold text-slate-900">سجل الحضور</h2>
+            <span className="text-xs text-slate-500 font-mono tabular-nums">
+              بعذر: {passData.totalExcused}
             </span>
           </div>
 
           {passData.recentAttendance.length === 0 ? (
-            <p className="text-sm text-slate-500 py-6 text-center border border-dashed border-slate-200 rounded-lg">
-              لا توجد سجلات حضور مسجلة حتى الآن.
-            </p>
+            <p className="text-sm text-slate-500 py-6 text-center">لا توجد سجلات حضور بعد</p>
           ) : (
-            <div className="divide-y divide-slate-200">
+            <div className="divide-y divide-slate-100">
               {passData.recentAttendance.map((item, idx) => {
                 const meta = getAttendanceMeta(item.status);
                 return (
                   <div
                     key={`${item.date}_${idx}`}
-                    className="py-3 first:pt-0 last:pb-0 flex items-start justify-between gap-4"
+                    className="py-3 first:pt-0 last:pb-0 flex items-center justify-between gap-4"
                   >
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-sm font-medium text-slate-900">
                         {formatArabicDate(item.date)}
                       </p>
-                      {item.note && <p className="text-xs text-slate-600 mt-0.5">{item.note}</p>}
+                      {item.note && <p className="text-xs text-slate-500 mt-0.5">{item.note}</p>}
                     </div>
                     <span
                       className={`text-xs font-semibold whitespace-nowrap shrink-0 ${
@@ -681,116 +513,80 @@ export function ParentPassView({
           )}
         </section>
 
-        {/* Parent Action & Excuse Submission Panel */}
-        <section className="no-print bg-white border border-slate-200 rounded-xl p-6">
-          <div className="flex items-center gap-2.5 mb-2">
-            <FileCheck2 className="w-5 h-5 text-emerald-700" />
-            <h2 className="font-display text-lg font-bold text-slate-900">
-              تأكيد الاطلاع أو إرسال عذر للمدرسة
-            </h2>
-          </div>
-          <p className="text-xs text-slate-600 mb-5 leading-relaxed">
-            وثّق تأكيد الاطلاع أو أرسل عذر الغياب مباشرة عبر الموقع ليصل فوراً إلى لوحة إدارة
-            المدرسة دون الحاجة لواتساب.
-          </p>
-
-          <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg mb-4">
-            <button
-              type="button"
-              onClick={() => setAckType('seen')}
-              className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-                ackType === 'seen'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              تأكيد الاطلاع
-            </button>
-            <button
-              type="button"
-              onClick={() => setAckType('excuse')}
-              className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-                ackType === 'excuse'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              إرسال عذر غياب
-            </button>
+        {/* Parent Reply / Excuse */}
+        <section className="no-print bg-white border border-slate-200/80 rounded-xl p-5 sm:p-6">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <h2 className="font-display text-base font-bold text-slate-900">تواصل مع المدرسة</h2>
+            <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
+              <button
+                type="button"
+                onClick={() => setAckType('seen')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                  ackType === 'seen' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
+                }`}
+              >
+                تأكيد اطلاع
+              </button>
+              <button
+                type="button"
+                onClick={() => setAckType('excuse')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                  ackType === 'excuse' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
+                }`}
+              >
+                عذر غياب
+              </button>
+            </div>
           </div>
 
-          <form onSubmit={handleSubmitAck} className="space-y-3.5">
+          <form onSubmit={handleSubmitAck} className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">صفة المرسل</label>
-                <input
-                  type="text"
-                  value={senderLabel}
-                  onChange={(e) => setSenderLabel(e.target.value)}
-                  maxLength={80}
-                  placeholder="والد الطالب / والدة الطالب"
-                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
-                />
-              </div>
+              <input
+                type="text"
+                value={senderLabel}
+                onChange={(e) => setSenderLabel(e.target.value)}
+                maxLength={80}
+                placeholder="اسم أو صفة المرسل"
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+              />
 
               {ackType === 'excuse' && (
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">
-                    تاريخ الغياب
-                  </label>
-                  <input
-                    type="date"
-                    value={excuseDate}
-                    onChange={(e) => setExcuseDate(e.target.value)}
-                    className="w-full px-3 py-2 text-sm font-mono bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
-                  />
-                </div>
+                <input
+                  type="date"
+                  value={excuseDate}
+                  onChange={(e) => setExcuseDate(e.target.value)}
+                  className="w-full px-3 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+                />
               )}
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
-                {ackType === 'excuse' ? 'سبب العذر أو الملاحظة للمدرسة' : 'ملاحظة اختيارية للإدارة'}
-              </label>
-              <textarea
-                rows={2}
-                value={messageText}
-                onChange={(e) => setMessageText(e.target.value)}
-                maxLength={400}
-                placeholder={
-                  ackType === 'excuse'
-                    ? 'مثال: كان لدى الطالب موعد طبي صباح اليوم، شاكرين تفهمكم.'
-                    : 'مثال: تم الاطلاع على خلاصة الدرجات، شكراً لجهودكم.'
-                }
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
-              />
-            </div>
+            <textarea
+              rows={2}
+              value={messageText}
+              onChange={(e) => setMessageText(e.target.value)}
+              maxLength={400}
+              placeholder={ackType === 'excuse' ? 'سبب الغياب...' : 'ملاحظة اختيارية...'}
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+            />
 
-            <div className="flex flex-wrap items-center gap-3 pt-1">
-              <button
-                type="submit"
-                disabled={submitting}
-                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap"
-              >
-                <Send className="w-4 h-4" />
-                <span>
-                  {submitting
-                    ? 'جاري التوثيق الفوري...'
-                    : user || demoPass
-                      ? 'إرسال وتوثيق فوري عبر الموقع'
-                      : 'توثيق فوري عبر حساب Google'}
-                </span>
-              </button>
-            </div>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>
+                {submitting ? 'جاري الإرسال...' : user || demoPass ? 'إرسال' : 'تأكيد عبر Google'}
+              </span>
+            </button>
           </form>
 
           {acks.length > 0 && (
-            <div className="mt-5 pt-4 border-t border-slate-200 space-y-2.5">
-              <p className="text-xs font-semibold text-slate-700">التوثيقات المرسلة:</p>
+            <div className="mt-4 pt-4 border-t border-slate-100 divide-y divide-slate-100">
               {acks.map((ack) => (
                 <div
                   key={ack.id}
-                  className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex items-start justify-between gap-3 text-xs"
+                  className="py-2.5 first:pt-0 last:pb-0 flex items-start justify-between gap-3 text-xs"
                 >
                   <div>
                     <p className="font-semibold text-slate-900">
@@ -803,7 +599,7 @@ export function ParentPassView({
                       ack.schoolStatus === 'reviewed' ? 'text-emerald-700' : 'text-amber-700'
                     }`}
                   >
-                    {ack.schoolStatus === 'reviewed' ? 'تمت مراجعة المدرسة' : 'بانتظار المراجعة'}
+                    {ack.schoolStatus === 'reviewed' ? 'تمت المراجعة' : 'قيد المراجعة'}
                   </span>
                 </div>
               ))}

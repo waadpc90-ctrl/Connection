@@ -1,20 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { BellRing, Camera, ExternalLink, Layers, Save, Table2, Trash2 } from 'lucide-react';
 import {
-  BellRing,
-  Camera,
-  Check,
-  CheckCircle2,
-  Copy,
-  ExternalLink,
-  Layers,
-  Save,
-  Table2,
-  Trash2,
-} from 'lucide-react';
-import {
-  buildGradeWhatsAppMessage,
-  buildPassUrl,
-  buildStudentSummaryWhatsAppMessage,
   computePassMetrics,
   deleteGradeEntryAndSyncPass,
   pushInstantSummaryAlertToSection,
@@ -49,12 +35,6 @@ interface GradesTabProps {
   onNotify: (kind: 'success' | 'error', message: string) => void;
 }
 
-const QUICK_NOTES = [
-  'أداء متميز وتفاعل رائع',
-  'تحسن ملحوظ، استمر',
-  'يحتاج مراجعة الدروس السابقة',
-];
-
 type GradeSubMode = 'photo' | 'manual' | 'summary';
 
 export function GradesTab({
@@ -83,15 +63,12 @@ export function GradesTab({
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<boolean>(false);
   const [broadcasting, setBroadcasting] = useState<boolean>(false);
-  const [lastBroadcastSubject, setLastBroadcastSubject] = useState<string>('');
 
   const [dispatchFilter, setDispatchFilter] = useState<'all' | 'high' | 'attention'>('all');
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  // Keep selectedClassId strictly synced to classrooms of the active stage
   useEffect(() => {
     const existsInStage = classrooms.some((c) => c.id === selectedClassId);
     if (!existsInStage) {
@@ -121,7 +98,6 @@ export function GradesTab({
     [classStudents, scores]
   );
 
-  // All distinct subjects recorded for this section (for multi-subject aggregation table)
   const sectionSubjects = useMemo(() => {
     const set = new Set<string>();
     for (const g of gradeEntries) {
@@ -130,7 +106,6 @@ export function GradesTab({
     return Array.from(set);
   }, [gradeEntries, selectedClassId]);
 
-  // Precomputed full multi-subject summary per student in this section
   const sectionSummaryRows = useMemo(() => {
     return classStudents.map((student) => {
       const metrics = computePassMetrics(student.id, attendanceLogs, gradeEntries, stageId);
@@ -164,7 +139,7 @@ export function GradesTab({
         gradeEntries,
         {
           subject: activeSubject,
-          title: title.trim() || 'تقييم مادة',
+          title: title.trim() || 'تقييم',
           maxScore,
           date,
           scores: batchScores,
@@ -173,14 +148,10 @@ export function GradesTab({
       );
       setScores({});
       setNotes({});
-      setLastBroadcastSubject(activeSubject);
       setSubMode('summary');
-      onNotify(
-        'success',
-        `تم رصد ${created.length} درجة لمادة ${activeSubject} وتجميع خلاصة المواد وإرسال الإشعار الفوري عبر الموقع لبوابة المرحلة وجميع البطاقات.`
-      );
+      onNotify('success', `تم نشر ${created.length} درجة لمادة ${activeSubject}.`);
     } catch {
-      onNotify('error', 'تعذر حفظ الدرجات. تأكد من أن كل درجة لا تتجاوز الدرجة العظمى.');
+      onNotify('error', 'تعذر حفظ الدرجات.');
     } finally {
       setSaving(false);
     }
@@ -188,12 +159,8 @@ export function GradesTab({
 
   const handleManualPublish = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) {
-      onNotify('error', 'يرجى كتابة عنوان الاختبار أو التقييم.');
-      return;
-    }
-    if (enteredCount === 0) {
-      onNotify('error', 'أدخل درجة واحدة على الأقل قبل النشر.');
+    if (!title.trim() || enteredCount === 0) {
+      onNotify('error', 'أدخل درجة واحدة على الأقل.');
       return;
     }
     await publishBatchAndOpenSummary(scores, notes);
@@ -210,12 +177,9 @@ export function GradesTab({
         attendanceLogs,
         gradeEntries
       );
-      onNotify(
-        'success',
-        `تم إرسال إشعار فوري عبر الموقع بالخلاصة الشاملة لبوابة باركود ${stageName} وبطاقات جميع طلاب ${activeClassroom?.name || 'الشعبة'} (${classStudents.length} طالب).`
-      );
+      onNotify('success', 'تم إرسال إشعار الخلاصة للجميع.');
     } catch {
-      onNotify('error', 'تعذر إرسال الإشعار الفوري الآن.');
+      onNotify('error', 'تعذر الإرسال.');
     } finally {
       setBroadcasting(false);
     }
@@ -234,17 +198,6 @@ export function GradesTab({
       .slice(0, 30);
   }, [gradeEntries, selectedClassId, dispatchFilter]);
 
-  const handleCopy = async (id: string, msg: string) => {
-    try {
-      await navigator.clipboard.writeText(msg);
-      setCopiedId(id);
-      onNotify('success', 'تم نسخ نص التبليغ.');
-      setTimeout(() => setCopiedId((prev) => (prev === id ? null : prev)), 2000);
-    } catch {
-      onNotify('error', 'تعذر النسخ إلى الحافظة.');
-    }
-  };
-
   const handleDeleteGrade = async (entry: GradeEntry) => {
     try {
       await deleteGradeEntryAndSyncPass(
@@ -255,103 +208,90 @@ export function GradesTab({
         gradeEntries
       );
       setConfirmDeleteId(null);
-      onNotify('success', 'تم حذف الدرجة وإعادة حساب خلاصة بطاقة الطالب.');
+      onNotify('success', 'تم حذف الدرجة.');
     } catch {
-      onNotify('error', 'تعذر حذف الدرجة.');
+      onNotify('error', 'تعذر الحذف.');
     }
   };
 
   if (classrooms.length === 0) {
     return (
-      <div className="bg-white border border-slate-200 rounded-xl p-10 text-center">
-        <p className="font-display text-lg font-bold text-slate-900 mb-1">
-          لا توجد شعب مضافة في {stageName} بعد
-        </p>
-        <p className="text-sm text-slate-600">
-          انتقل إلى تبويب «الطلاب وبطاقات QR» لإضافة شعب {stageName} ثم ابدأ برفع كشوف الدرجات.
-        </p>
+      <div className="bg-white border border-slate-200/80 rounded-xl p-10 text-center text-sm text-slate-500">
+        أضف شعبة في {stageName} أولاً
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Shared Section + Subject Context Bar & Mode Switcher */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start">
+    <div className="space-y-5">
+      {/* Mode Switcher & Contextual Inputs */}
+      <div className="bg-white border border-slate-200/80 rounded-xl p-4 sm:p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
             <button
               type="button"
               onClick={() => setSubMode('photo')}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap ${
                 subMode === 'photo'
                   ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-600 hover:text-slate-900 font-medium'
               }`}
             >
               <Camera className="w-3.5 h-3.5 text-emerald-700" />
-              <span>رفع صورة كشف الشعبة</span>
+              <span>من صورة</span>
             </button>
 
             <button
               type="button"
               onClick={() => setSubMode('manual')}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap ${
                 subMode === 'manual'
                   ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-600 hover:text-slate-900 font-medium'
               }`}
             >
               <Table2 className="w-3.5 h-3.5 text-emerald-700" />
-              <span>إدخال يدوي سريع</span>
+              <span>يدوي</span>
             </button>
 
             <button
               type="button"
               onClick={() => setSubMode('summary')}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap ${
                 subMode === 'summary'
                   ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-600 hover:text-slate-900 font-medium'
               }`}
             >
               <Layers className="w-3.5 h-3.5 text-emerald-700" />
-              <span>تجميع المواد وإرسال الخلاصة للجميع</span>
+              <span>الخلاصة</span>
             </button>
           </div>
 
-          <p className="text-xs text-slate-500">
-            المرحلة النشطة: <strong className="text-slate-800">{stageName}</strong> · الشعب:{' '}
-            <span className="font-mono tabular-nums">{classrooms.length}</span>
-          </p>
+          <select
+            value={selectedClassId}
+            onChange={(e) => setSelectedClassId(e.target.value)}
+            aria-label="الشعبة"
+            className="px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+          >
+            {classrooms.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </div>
 
-        {/* Assessment Metadata Bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-2 border-t border-slate-100">
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">الشعبة</label>
-            <select
-              value={selectedClassId}
-              onChange={(e) => setSelectedClassId(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
-            >
-              {classrooms.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">المادة الدراسية</label>
+        {subMode !== 'summary' && (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
             <select
               value={subject}
               onChange={(e) => {
                 setSubject(e.target.value);
                 setCustomSubject('');
               }}
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
+              aria-label="المادة"
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
             >
               {DEFAULT_SUBJECTS.map((sub) => (
                 <option key={sub} value={sub}>
@@ -359,45 +299,38 @@ export function GradesTab({
                 </option>
               ))}
             </select>
-          </div>
 
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">عنوان الامتحان</label>
             <input
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               maxLength={120}
-              placeholder="امتحان الشهر الأول"
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
+              placeholder="عنوان الامتحان"
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
             />
-          </div>
 
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">الدرجة العظمى</label>
             <input
               type="number"
               min={1}
               max={1000}
               value={maxScore}
               onChange={(e) => setMaxScore(Math.max(1, Number(e.target.value) || 100))}
-              className="w-full px-3 py-2 text-sm font-mono tabular-nums bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
+              aria-label="الدرجة العظمى"
+              className="w-full px-3 py-2 text-sm font-mono tabular-nums bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
             />
-          </div>
 
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">تاريخ الرصد</label>
             <input
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              className="w-full px-3 py-2 text-sm font-mono bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
+              aria-label="التاريخ"
+              className="w-full px-3 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
             />
           </div>
-        </div>
+        )}
       </div>
 
-      {/* MODE 1: Photo Grade Sheet Extraction */}
+      {/* Mode 1: Photo Upload */}
       {subMode === 'photo' && (
         <GradeImageUploadPanel
           sectionName={activeClassroom?.name || 'الشعبة'}
@@ -417,49 +350,44 @@ export function GradesTab({
             if (meta.maxScore && meta.maxScore > 0) {
               setMaxScore(meta.maxScore);
             }
-            onNotify('success', 'تم تحديث المادة والدرجة العظمى من ترويسة الكشف.');
+            onNotify('success', 'تم تحديث بيانات الكشف.');
           }}
           onPublishExtracted={publishBatchAndOpenSummary}
           onNotify={onNotify}
         />
       )}
 
-      {/* MODE 2: Rapid Manual Keyboard Entry */}
+      {/* Mode 2: Manual Entry */}
       {subMode === 'manual' && (
         <form
           onSubmit={handleManualPublish}
-          className="bg-white border border-slate-200 rounded-xl overflow-hidden"
+          className="bg-white border border-slate-200/80 rounded-xl overflow-hidden"
         >
-          <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="font-display text-base font-bold text-slate-900">
-                إدخال درجات {activeSubject} — {activeClassroom?.name}
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                اضغط Enter بعد كل درجة للانتقال التلقائي للطالب التالي، ثم انشرها لبطاقات الجميع.
-              </p>
-            </div>
+          <div className="px-5 py-3.5 border-b border-slate-200/80 flex items-center justify-between gap-3">
+            <h3 className="font-display text-sm sm:text-base font-bold text-slate-900">
+              {activeSubject} · {activeClassroom?.name}
+            </h3>
             <button
               type="submit"
               disabled={saving || enteredCount === 0}
-              className="inline-flex items-center gap-2 px-5 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap"
             >
-              <Save className="w-4 h-4" />
-              <span>{saving ? 'جاري النشر...' : `نشر وتحديث بطاقات الجميع (${enteredCount})`}</span>
+              <Save className="w-3.5 h-3.5" />
+              <span>{saving ? 'جاري النشر...' : `نشر (${enteredCount})`}</span>
             </button>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-right border-collapse">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-semibold text-slate-600">
+                <tr className="border-b border-slate-100 bg-slate-50/70 text-xs font-semibold text-slate-500">
                   <th className="py-3 px-5">الطالب</th>
-                  <th className="py-3 px-4 w-36">الدرجة (من {maxScore})</th>
-                  <th className="py-3 px-4 w-32">التقدير</th>
-                  <th className="py-3 px-5">ملاحظة المعلم لولي الأمر</th>
+                  <th className="py-3 px-4 w-32">الدرجة / {maxScore}</th>
+                  <th className="py-3 px-4 w-28">التقدير</th>
+                  <th className="py-3 px-5">ملاحظة</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 text-sm">
+              <tbody className="divide-y divide-slate-100 text-sm">
                 {classStudents.map((student, index) => {
                   const raw = scores[student.id] ?? '';
                   const hasNum = raw.trim() !== '' && !Number.isNaN(Number(raw));
@@ -471,10 +399,10 @@ export function GradesTab({
                   const rating = pct !== null ? classifyPercentage(pct) : null;
 
                   return (
-                    <tr key={student.id} className="hover:bg-slate-50/60">
+                    <tr key={student.id} className="hover:bg-slate-50/50">
                       <td className="py-3 px-5">
                         <p className="font-medium text-slate-900">{student.fullName}</p>
-                        <p className="text-xs text-slate-500 font-mono tabular-nums">
+                        <p className="text-xs text-slate-400 font-mono tabular-nums">
                           {student.studentCode}
                         </p>
                       </td>
@@ -494,7 +422,7 @@ export function GradesTab({
                             setScores((prev) => ({ ...prev, [student.id]: e.target.value }))
                           }
                           placeholder="—"
-                          className="w-24 px-3 py-1.5 text-sm font-mono tabular-nums text-center bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
+                          className="w-24 px-3 py-1.5 text-sm font-mono tabular-nums text-center bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
                         />
                       </td>
 
@@ -509,40 +437,24 @@ export function GradesTab({
                                   : 'text-rose-700'
                             }`}
                           >
-                            {pct}% · {rating.label}
+                            {pct}%
                           </span>
                         ) : (
-                          <span className="text-slate-400">—</span>
+                          <span className="text-slate-300">—</span>
                         )}
                       </td>
 
                       <td className="py-3 px-5">
-                        <div className="space-y-1.5">
-                          <input
-                            type="text"
-                            value={notes[student.id] || ''}
-                            onChange={(e) =>
-                              setNotes((prev) => ({ ...prev, [student.id]: e.target.value }))
-                            }
-                            maxLength={300}
-                            placeholder="ملاحظة تربوية اختيارية..."
-                            className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
-                          />
-                          <div className="flex flex-wrap gap-1.5">
-                            {QUICK_NOTES.map((quick) => (
-                              <button
-                                key={quick}
-                                type="button"
-                                onClick={() =>
-                                  setNotes((prev) => ({ ...prev, [student.id]: quick }))
-                                }
-                                className="text-[11px] text-slate-500 hover:text-emerald-800 underline underline-offset-2 transition-colors"
-                              >
-                                {quick}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
+                        <input
+                          type="text"
+                          value={notes[student.id] || ''}
+                          onChange={(e) =>
+                            setNotes((prev) => ({ ...prev, [student.id]: e.target.value }))
+                          }
+                          maxLength={300}
+                          placeholder="اختياري..."
+                          className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+                        />
                       </td>
                     </tr>
                   );
@@ -553,29 +465,23 @@ export function GradesTab({
         </form>
       )}
 
-      {/* MODE 3: Aggregated Multi-Subject Summary Card & Instant In-Website Broadcast */}
+      {/* Mode 3: Multi-Subject Summary */}
       {subMode === 'summary' && (
-        <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="p-5 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h3 className="font-display text-lg font-bold text-slate-900">
-                خلاصة جميع المواد لطلاب {activeClassroom?.name} ({stageName})
-              </h3>
-              <p className="text-xs text-slate-600 mt-0.5">
-                يجمع النظام تلقائياً درجات كل طالب من جميع المواد في هذه المرحلة مع سجل غيابه في بطاقة
-                خلاصة واحدة ويُشعر أولياء الأمور عبر الموقع فوراً بدون واتساب.
-              </p>
-            </div>
+        <section className="bg-white border border-slate-200/80 rounded-xl overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-3">
+            <h3 className="font-display text-sm sm:text-base font-bold text-slate-900">
+              خلاصة {activeClassroom?.name}
+            </h3>
 
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2">
               {stageToken && (
                 <button
                   type="button"
                   onClick={() => onPreviewStagePortal(stageToken)}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg transition-colors whitespace-nowrap"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg whitespace-nowrap"
                 >
                   <ExternalLink className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>معاينة بوابة المرحلة</span>
+                  <span>البوابة</span>
                 </button>
               )}
 
@@ -583,59 +489,40 @@ export function GradesTab({
                 type="button"
                 disabled={broadcasting || classStudents.length === 0}
                 onClick={handlePushInstantSummaryAll}
-                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded-lg whitespace-nowrap"
               >
                 <BellRing className="w-3.5 h-3.5" />
-                <span>
-                  {broadcasting
-                    ? 'جاري إرسال الإشعار...'
-                    : 'إرسال إشعار فوري للجميع عبر الموقع'}
-                </span>
+                <span>{broadcasting ? 'جاري...' : 'إشعار الجميع'}</span>
               </button>
             </div>
           </div>
 
           {classStudents.length === 0 ? (
-            <div className="p-10 text-center text-sm text-slate-500">
-              لا يوجد طلاب في هذه الشعبة بعد.
-            </div>
+            <div className="p-10 text-center text-sm text-slate-400">لا يوجد طلاب</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-right border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-semibold text-slate-600">
+                  <tr className="border-b border-slate-100 bg-slate-50/70 text-xs font-semibold text-slate-500">
                     <th className="py-3 px-4">الطالب</th>
                     {sectionSubjects.map((sub) => (
                       <th key={sub} className="py-3 px-3 text-center whitespace-nowrap">
                         {sub}
                       </th>
                     ))}
-                    <th className="py-3 px-3 text-center whitespace-nowrap">المجموع والمعدل</th>
+                    <th className="py-3 px-3 text-center whitespace-nowrap">المعدل</th>
                     <th className="py-3 px-3 text-center whitespace-nowrap">الغياب</th>
-                    <th className="py-3 px-4 text-left whitespace-nowrap">بطاقة الخلاصة الحية</th>
+                    <th className="py-3 px-4 text-left whitespace-nowrap">البطاقة</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-200">
+                <tbody className="divide-y divide-slate-100">
                   {sectionSummaryRows.map(({ student, metrics, bySub }) => {
                     const rating = classifyPercentage(metrics.averagePercent);
-                    const passUrl = buildPassUrl(student.passToken);
-                    const summaryMsg = buildStudentSummaryWhatsAppMessage(
-                      school.name,
-                      stageName,
-                      student,
-                      metrics,
-                      passUrl,
-                      lastBroadcastSubject || undefined
-                    );
-
                     return (
-                      <tr key={student.id} className="hover:bg-slate-50/60">
-                        <td className="py-3.5 px-4">
+                      <tr key={student.id} className="hover:bg-slate-50/50">
+                        <td className="py-3 px-4">
                           <p className="font-semibold text-slate-900 whitespace-nowrap">
                             {student.fullName}
-                          </p>
-                          <p className="text-xs text-slate-500 font-mono tabular-nums">
-                            {student.studentCode}
                           </p>
                         </td>
 
@@ -644,7 +531,7 @@ export function GradesTab({
                           return (
                             <td
                               key={sub}
-                              className="py-3.5 px-3 text-center font-mono tabular-nums text-xs"
+                              className="py-3 px-3 text-center font-mono tabular-nums text-xs"
                             >
                               {s ? (
                                 <span className="font-semibold text-slate-900">
@@ -658,70 +545,45 @@ export function GradesTab({
                           );
                         })}
 
-                        <td className="py-3.5 px-3 text-center font-mono tabular-nums text-xs whitespace-nowrap">
+                        <td className="py-3 px-3 text-center font-mono tabular-nums text-xs whitespace-nowrap">
                           {metrics.subjectsCount > 0 ? (
-                            <div>
-                              <span className="font-bold text-slate-900">
-                                {metrics.totalScoreSum}/{metrics.totalMaxScoreSum}
-                              </span>
-                              <p
-                                className={`font-semibold ${
-                                  rating.tier === 'excellent' || rating.tier === 'very-good'
-                                    ? 'text-emerald-700'
-                                    : rating.tier === 'good'
-                                      ? 'text-amber-700'
-                                      : 'text-rose-700'
-                                }`}
-                              >
-                                {metrics.averagePercent}% · {rating.label}
-                              </p>
-                            </div>
+                            <span
+                              className={`font-bold ${
+                                rating.tier === 'excellent' || rating.tier === 'very-good'
+                                  ? 'text-emerald-700'
+                                  : rating.tier === 'good'
+                                    ? 'text-amber-700'
+                                    : 'text-rose-700'
+                              }`}
+                            >
+                              {metrics.averagePercent}%
+                            </span>
                           ) : (
-                            <span className="text-slate-400">—</span>
+                            <span className="text-slate-300">—</span>
                           )}
                         </td>
 
-                        <td className="py-3.5 px-3 text-center font-mono tabular-nums text-xs">
+                        <td className="py-3 px-3 text-center font-mono tabular-nums text-xs">
                           <span
                             className={
                               metrics.totalAbsent >= school.absenceAlertThreshold
                                 ? 'font-bold text-rose-700'
-                                : 'text-slate-700'
+                                : 'text-slate-600'
                             }
                           >
                             {metrics.totalAbsent}
                           </span>
                         </td>
 
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 ml-1 whitespace-nowrap">
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>محدّثة حياً</span>
-                            </span>
-
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(`sum_${student.id}`, summaryMsg)}
-                              title="نسخ ملخص الدرجات"
-                              className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg"
-                            >
-                              {copiedId === `sum_${student.id}` ? (
-                                <Check className="w-4 h-4 text-emerald-700" />
-                              ) : (
-                                <Copy className="w-4 h-4" />
-                              )}
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => onPreviewPass(student.passToken)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5 text-emerald-700" />
-                              <span>فتح البطاقة</span>
-                            </button>
-                          </div>
+                        <td className="py-3 px-4 text-left">
+                          <button
+                            type="button"
+                            onClick={() => onPreviewPass(student.passToken)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg whitespace-nowrap"
+                          >
+                            <span>فتح</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </button>
                         </td>
                       </tr>
                     );
@@ -733,35 +595,27 @@ export function GradesTab({
         </section>
       )}
 
-      {/* Recent Subject Entries Log for this Section (Stage-Isolated) */}
-      <section className="bg-white border border-slate-200 rounded-xl p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
-          <div>
-            <h2 className="font-display text-base font-bold text-slate-900">
-              سجل درجات المواد المرصودة ({activeClassroom?.name})
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              درجات هذه المرحلة فقط — تُحدّث تلقائياً في بطاقة ولي الأمر وبوابة باركود المرحلة عبر
-              الموقع.
-            </p>
-          </div>
+      {/* Recent Grades Log */}
+      <section className="bg-white border border-slate-200/80 rounded-xl p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h2 className="font-display text-sm sm:text-base font-bold text-slate-900">
+            سجل الدرجات
+          </h2>
 
-          <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start">
+          <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
             {(
               [
                 { id: 'all', label: 'الكل' },
-                { id: 'high', label: 'المتفوقون (85%+)' },
-                { id: 'attention', label: 'يحتاج متابعة (<70%)' },
+                { id: 'high', label: '85%+' },
+                { id: 'attention', label: 'أقل من 70%' },
               ] as const
             ).map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setDispatchFilter(tab.id)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-                  dispatchFilter === tab.id
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                  dispatchFilter === tab.id ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
                 }`}
               >
                 {tab.label}
@@ -771,89 +625,53 @@ export function GradesTab({
         </div>
 
         {filteredRecentGrades.length === 0 ? (
-          <p className="text-sm text-slate-500 py-8 text-center border border-dashed border-slate-200 rounded-lg">
-            لا توجد درجات مطابقة لهذا التصنيف في الشعبة المحددة.
-          </p>
+          <p className="text-sm text-slate-400 py-6 text-center">لا توجد درجات</p>
         ) : (
-          <div className="divide-y divide-slate-200">
+          <div className="divide-y divide-slate-100">
             {filteredRecentGrades.map((entry) => {
               const student = studentById.get(entry.studentId);
               const pct = Math.round((entry.score / Math.max(1, entry.maxScore)) * 100);
               const rating = classifyPercentage(pct);
-              const passUrl = student ? buildPassUrl(student.passToken) : window.location.origin;
-              const msg = student
-                ? buildGradeWhatsAppMessage(school.name, stageName, student, entry, passUrl)
-                : '';
 
               return (
                 <div
                   key={entry.id}
-                  className="py-3.5 first:pt-0 last:pb-0 flex flex-col md:flex-row md:items-center justify-between gap-3"
+                  className="py-3 first:pt-0 last:pb-0 flex items-center justify-between gap-3"
                 >
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-slate-900">
+                    <p className="text-sm font-semibold text-slate-900 truncate">
                       {entry.studentName} ·{' '}
-                      <span className="font-normal text-slate-700">
-                        {entry.subject} ({entry.title})
-                      </span>
+                      <span className="font-normal text-slate-600">{entry.subject}</span>
                     </p>
-                    <p className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-2">
-                      <span className="font-mono tabular-nums font-semibold text-slate-900">
-                        {entry.score} / {entry.maxScore} ({pct}%)
-                      </span>
-                      <span>·</span>
+                    <p className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums">
+                      <span className="font-semibold text-slate-900">
+                        {entry.score}/{entry.maxScore}
+                      </span>{' '}
+                      ·{' '}
                       <span
                         className={
                           rating.tier === 'excellent' || rating.tier === 'very-good'
-                            ? 'text-emerald-700 font-medium'
+                            ? 'text-emerald-700'
                             : rating.tier === 'good'
-                              ? 'text-amber-700 font-medium'
-                              : 'text-rose-700 font-medium'
+                              ? 'text-amber-700'
+                              : 'text-rose-700'
                         }
                       >
-                        {rating.label}
-                      </span>
-                      <span>·</span>
-                      <span>{formatArabicDate(entry.date)}</span>
-                      {entry.teacherNote && (
-                        <>
-                          <span>·</span>
-                          <span className="text-slate-600">{entry.teacherNote}</span>
-                        </>
-                      )}
+                        {pct}%
+                      </span>{' '}
+                      · {formatArabicDate(entry.date)}
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     {student && (
-                      <>
-                        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 ml-1 whitespace-nowrap">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>أُشعر عبر الموقع</span>
-                        </span>
-
-                        <button
-                          type="button"
-                          onClick={() => handleCopy(entry.id, msg)}
-                          className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
-                          title="نسخ ملخص الدرجة"
-                        >
-                          {copiedId === entry.id ? (
-                            <Check className="w-4 h-4 text-emerald-700" />
-                          ) : (
-                            <Copy className="w-4 h-4" />
-                          )}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => onPreviewPass(student.passToken)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg transition-colors whitespace-nowrap"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5 text-emerald-700" />
-                          <span>فتح البطاقة</span>
-                        </button>
-                      </>
+                      <button
+                        type="button"
+                        onClick={() => onPreviewPass(student.passToken)}
+                        className="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg whitespace-nowrap"
+                      >
+                        البطاقة
+                      </button>
                     )}
 
                     {confirmDeleteId === entry.id ? (
@@ -861,14 +679,14 @@ export function GradesTab({
                         <button
                           type="button"
                           onClick={() => handleDeleteGrade(entry)}
-                          className="px-2.5 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg whitespace-nowrap"
+                          className="px-2.5 py-1.5 text-xs font-semibold text-white bg-rose-600 rounded-lg"
                         >
-                          تأكيد الحذف
+                          حذف
                         </button>
                         <button
                           type="button"
                           onClick={() => setConfirmDeleteId(null)}
-                          className="px-2.5 py-1.5 text-xs text-slate-600 hover:text-slate-900"
+                          className="px-2 py-1.5 text-xs text-slate-500"
                         >
                           إلغاء
                         </button>
@@ -877,8 +695,8 @@ export function GradesTab({
                       <button
                         type="button"
                         onClick={() => setConfirmDeleteId(entry.id)}
-                        title="حذف الدرجة"
-                        className="p-2 text-slate-400 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
+                        aria-label="حذف"
+                        className="p-1.5 text-slate-400 hover:text-rose-700 rounded-lg"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>

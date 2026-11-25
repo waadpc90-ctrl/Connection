@@ -3,9 +3,7 @@ import { User } from 'firebase/auth';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import {
   Award,
-  Camera,
   ClipboardCheck,
-  Layers,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -49,12 +47,20 @@ interface SchoolDashboardProps {
 }
 
 const NAV_ITEMS: { id: SchoolTab; label: string; icon: typeof LayoutDashboard }[] = [
-  { id: 'overview', label: 'نظرة عامة', icon: LayoutDashboard },
-  { id: 'stage-broadcasts', label: 'باركود المراحل والإشعار الفوري', icon: Megaphone },
-  { id: 'attendance', label: 'رصد الغياب', icon: ClipboardCheck },
-  { id: 'grades', label: 'رصد الدرجات', icon: Award },
-  { id: 'students', label: 'الطلاب وبطاقات QR', icon: QrCode },
-  { id: 'settings', label: 'إعدادات المدرسة', icon: Settings },
+  { id: 'overview', label: 'الرئيسية', icon: LayoutDashboard },
+  { id: 'stage-broadcasts', label: 'الإشعارات', icon: Megaphone },
+  { id: 'attendance', label: 'الغياب', icon: ClipboardCheck },
+  { id: 'grades', label: 'الدرجات', icon: Award },
+  { id: 'students', label: 'الطلاب', icon: QrCode },
+  { id: 'settings', label: 'الإعدادات', icon: Settings },
+];
+
+const MOBILE_BAR_TABS: SchoolTab[] = [
+  'overview',
+  'stage-broadcasts',
+  'attendance',
+  'grades',
+  'students',
 ];
 
 export function SchoolDashboard({
@@ -77,7 +83,6 @@ export function SchoolDashboard({
   const [loading, setLoading] = useState<boolean>(true);
   const [seeding, setSeeding] = useState<boolean>(false);
 
-  // Initialize school document and attach real-time listeners
   useEffect(() => {
     let active = true;
     const unsubs: (() => void)[] = [];
@@ -187,18 +192,14 @@ export function SchoolDashboard({
     setSeeding(true);
     try {
       await seedDemoSchoolData(uid, school);
-      onNotify(
-        'success',
-        'تم إنشاء 3 مراحل دراسية (6 شعب) وباركود لكل مرحلة مع طلاب ودرجات مجمّعة وإشعارات فورية جاهزة.'
-      );
+      onNotify('success', 'تم إضافة البيانات النموذجية للمراحل الثلاث.');
     } catch {
-      onNotify('error', 'تعذر تحميل البيانات النموذجية. حاول مجدداً.');
+      onNotify('error', 'تعذر تحميل البيانات النموذجية.');
     } finally {
       setSeeding(false);
     }
   };
 
-  // Keep the 3 stage QR portals' section lists & metadata synced whenever structure changes
   useEffect(() => {
     if (!school?.stageTokens) return;
     const classSig = classrooms
@@ -219,9 +220,7 @@ export function SchoolDashboard({
     lastPortalSyncSigRef.current = sig;
 
     const timer = window.setTimeout(() => {
-      syncStagePortalsMetadata(uid, school, classrooms, students).catch(() => {
-        // Non-blocking background sync
-      });
+      syncStagePortalsMetadata(uid, school, classrooms, students).catch(() => {});
     }, 400);
     return () => window.clearTimeout(timer);
   }, [uid, school, classrooms, students]);
@@ -235,7 +234,6 @@ export function SchoolDashboard({
     [classrooms]
   );
 
-  // Strict per-stage isolation for classrooms, students, attendance logs, and grades
   const stageStats = useMemo(() => {
     const map: Record<StageId, { sections: number; students: number }> = {
       stage_1: { sections: 0, students: 0 },
@@ -289,25 +287,20 @@ export function SchoolDashboard({
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F9F7] text-slate-900 flex">
-      {/* Desktop RTL Right Sidebar (260px) */}
-      <aside className="no-print hidden lg:flex lg:flex-col w-[260px] shrink-0 bg-white border-l border-slate-200 sticky top-0 h-screen">
-        <div className="h-16 px-6 border-b border-slate-200 flex items-center justify-between">
+    <div className="min-h-screen bg-[#F7F8F7] text-slate-900 flex">
+      {/* Desktop Sidebar */}
+      <aside className="no-print hidden lg:flex lg:flex-col w-[240px] shrink-0 bg-white border-l border-slate-200/80 sticky top-0 h-screen">
+        <div className="h-16 px-5 border-b border-slate-200/80 flex items-center justify-between">
           <span className="font-display text-xl font-bold text-slate-900 whitespace-nowrap">
             وصال
           </span>
-          <span className="text-[11px] font-medium text-emerald-800 whitespace-nowrap">
-            لوحة المدرسة
-          </span>
         </div>
 
-        <div className="px-4 py-4 border-b border-slate-200">
+        <div className="px-5 py-3.5 border-b border-slate-100">
           <p className="text-sm font-semibold text-slate-900 truncate">
-            {school?.name || 'جاري التحميل...'}
+            {school?.name || '...'}
           </p>
-          <p className="text-xs text-slate-500 mt-0.5 truncate">
-            {school?.academicYear || 'العام الدراسي'}
-          </p>
+          <p className="text-xs text-slate-500 mt-0.5 truncate">{school?.academicYear || ''}</p>
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -319,10 +312,10 @@ export function SchoolDashboard({
                 key={item.id}
                 type="button"
                 onClick={() => handleSelectTab(item.id)}
-                className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-sm rounded-lg transition-colors whitespace-nowrap ${
                   active
                     ? 'bg-emerald-50 text-emerald-900 font-semibold'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
                 }`}
               >
                 <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-emerald-700' : 'text-slate-400'}`} />
@@ -332,22 +325,17 @@ export function SchoolDashboard({
           })}
         </nav>
 
-        <div className="p-4 border-t border-slate-200">
-          <div className="mb-3 min-w-0">
-            <p className="text-xs font-semibold text-slate-800 truncate">
-              {user.displayName || 'مسؤول المدرسة'}
-            </p>
-            <p className="text-[11px] text-slate-500 truncate" dir="ltr">
-              {user.email}
-            </p>
-          </div>
+        <div className="p-4 border-t border-slate-200/80">
+          <p className="text-xs font-medium text-slate-700 truncate mb-2.5" dir="ltr">
+            {user.email}
+          </p>
           <button
             type="button"
             onClick={onSignOut}
             className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
           >
             <LogOut className="w-3.5 h-3.5" />
-            <span>تسجيل الخروج</span>
+            <span>خروج</span>
           </button>
         </div>
       </aside>
@@ -355,8 +343,8 @@ export function SchoolDashboard({
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
         <div className="no-print fixed inset-0 z-40 lg:hidden flex">
-          <div className="w-72 bg-white h-full border-l border-slate-200 flex flex-col">
-            <div className="h-16 px-5 border-b border-slate-200 flex items-center justify-between">
+          <div className="w-64 bg-white h-full border-l border-slate-200 flex flex-col">
+            <div className="h-14 px-5 border-b border-slate-200 flex items-center justify-between">
               <span className="font-display text-lg font-bold text-slate-900">وصال</span>
               <button
                 type="button"
@@ -375,10 +363,10 @@ export function SchoolDashboard({
                     key={item.id}
                     type="button"
                     onClick={() => handleSelectTab(item.id)}
-                    className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                    className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-sm rounded-lg transition-colors ${
                       active
                         ? 'bg-emerald-50 text-emerald-900 font-semibold'
-                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                        : 'text-slate-600 hover:bg-slate-50 font-medium'
                     }`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
@@ -394,129 +382,84 @@ export function SchoolDashboard({
                 className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-lg"
               >
                 <LogOut className="w-3.5 h-3.5" />
-                <span>تسجيل الخروج</span>
+                <span>خروج</span>
               </button>
             </div>
           </div>
-          <div
-            className="flex-1 bg-slate-900/35"
-            onClick={() => setMobileMenuOpen(false)}
-          />
+          <div className="flex-1 bg-slate-900/35" onClick={() => setMobileMenuOpen(false)} />
         </div>
       )}
 
-      {/* Main Content Area */}
-      <div className="flex-1 min-w-0 flex flex-col">
-        {/* Clean Contextual Top Header */}
-        <header className="no-print sticky top-0 z-20 h-16 bg-[#F8F9F7]/95 backdrop-blur-sm border-b border-slate-200 px-4 sm:px-8 flex items-center justify-between gap-4">
+      {/* Main Column */}
+      <div className="flex-1 min-w-0 flex flex-col pb-16 lg:pb-0">
+        <header className="no-print sticky top-0 z-20 h-14 sm:h-16 bg-white/95 backdrop-blur-sm border-b border-slate-200/80 px-4 sm:px-8 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
               onClick={() => setMobileMenuOpen(true)}
-              aria-label="فتح القائمة"
-              className="lg:hidden p-2 text-slate-600 hover:text-slate-900 hover:bg-white rounded-lg border border-slate-200"
+              aria-label="القائمة"
+              className="lg:hidden p-2 -mr-1 text-slate-600 hover:text-slate-900 rounded-lg"
             >
               <Menu className="w-5 h-5" />
             </button>
+            <h1 className="font-display text-base sm:text-lg font-bold text-slate-900 truncate">
+              {activeNavMeta.label}
+            </h1>
+          </div>
 
-            <div className="flex items-center gap-2 text-sm min-w-0">
-              <span className="text-slate-500 hidden sm:inline truncate">
-                {school?.name || 'لوحة المدرسة'}
-              </span>
-              <span className="text-slate-300 hidden sm:inline">/</span>
-              <h1 className="font-display font-bold text-slate-900 truncate">
-                {activeNavMeta.label}
-              </h1>
+          {!loading && school && activeTab !== 'settings' && (
+            <div className="hidden md:inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg shrink-0">
+              {STAGE_IDS.map((sid) => {
+                const isActive = activeStageId === sid;
+                const stat = stageStats[sid];
+                return (
+                  <button
+                    key={sid}
+                    type="button"
+                    onClick={() => setActiveStageId(sid)}
+                    className={`px-3 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap ${
+                      isActive
+                        ? 'bg-white text-slate-900 font-semibold shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 font-medium'
+                    }`}
+                  >
+                    <span>{stageNames[sid]}</span>
+                    <span className="font-mono tabular-nums text-[11px] text-slate-400 mr-1.5">
+                      {stat.students}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {activeTab !== 'stage-broadcasts' && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('stage-broadcasts')}
-                className="hidden md:inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap shrink-0"
-              >
-                <Megaphone className="w-3.5 h-3.5" />
-                <span>باركود وإشعار المرحلة</span>
-              </button>
-            )}
-
-            {activeTab !== 'grades' && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('grades')}
-                className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-800 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
-              >
-                <Camera className="w-3.5 h-3.5 text-emerald-700" />
-                <span>رفع صورة درجات</span>
-              </button>
-            )}
-
-            {activeTab !== 'attendance' && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('attendance')}
-                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap shrink-0"
-              >
-                <ClipboardCheck className="w-4 h-4" />
-                <span>رصد غياب اليوم</span>
-              </button>
-            )}
-          </div>
+          )}
         </header>
 
-        {/* 3-Stage Strict Isolation Switcher */}
+        {/* Mobile Stage Switcher */}
         {!loading && school && activeTab !== 'settings' && (
-          <div className="no-print bg-white border-b border-slate-200 px-4 sm:px-8 py-3">
-            <div className="max-w-6xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
-              <div className="flex items-center gap-2 overflow-x-auto pb-0.5 md:pb-0">
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 ml-1 whitespace-nowrap shrink-0">
-                  <Layers className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>المرحلة:</span>
-                </span>
-                {STAGE_IDS.map((sid) => {
-                  const isActive = activeStageId === sid;
-                  const stat = stageStats[sid];
-                  return (
-                    <button
-                      key={sid}
-                      type="button"
-                      onClick={() => setActiveStageId(sid)}
-                      className={`inline-flex items-center gap-2 px-3.5 py-2 text-xs rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
-                        isActive
-                          ? 'bg-emerald-700 text-white border-emerald-700 font-semibold'
-                          : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50 font-medium'
-                      }`}
-                    >
-                      <span>{stageNames[sid]}</span>
-                      <span
-                        className={`font-mono tabular-nums text-[11px] ${
-                          isActive ? 'text-emerald-100' : 'text-slate-500'
-                        }`}
-                      >
-                        {stat.sections} شعب · {stat.students} طالب
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('stage-broadcasts')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap shrink-0"
-                >
-                  <QrCode className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>باركود {activeStageName}</span>
-                </button>
-              </div>
+          <div className="no-print md:hidden bg-white border-b border-slate-200/80 px-4 py-2.5">
+            <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-lg">
+              {STAGE_IDS.map((sid) => {
+                const isActive = activeStageId === sid;
+                return (
+                  <button
+                    key={sid}
+                    type="button"
+                    onClick={() => setActiveStageId(sid)}
+                    className={`px-2 py-1.5 text-xs rounded-md transition-colors truncate ${
+                      isActive
+                        ? 'bg-white text-slate-900 font-semibold shadow-xs'
+                        : 'text-slate-600 font-medium'
+                    }`}
+                  >
+                    {stageNames[sid]}
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
 
-        <main className="flex-1 p-4 sm:p-8 max-w-6xl w-full mx-auto">
+        <main className="flex-1 p-4 sm:p-8 max-w-5xl w-full mx-auto">
           {loading || !school ? (
             <div className="space-y-4">
               <div className="h-24 bg-white border border-slate-200 rounded-xl animate-pulse" />
@@ -621,6 +564,28 @@ export function SchoolDashboard({
           )}
         </main>
       </div>
+
+      {/* Compact Mobile Bottom Navigation */}
+      <nav className="no-print lg:hidden fixed bottom-0 inset-x-0 z-20 h-14 bg-white border-t border-slate-200 grid grid-cols-5">
+        {MOBILE_BAR_TABS.map((tabId) => {
+          const item = NAV_ITEMS.find((n) => n.id === tabId)!;
+          const Icon = item.icon;
+          const active = activeTab === tabId;
+          return (
+            <button
+              key={tabId}
+              type="button"
+              onClick={() => handleSelectTab(tabId)}
+              className={`flex flex-col items-center justify-center gap-0.5 text-[11px] transition-colors ${
+                active ? 'text-emerald-700 font-semibold' : 'text-slate-500 font-medium'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              <span className="truncate">{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }

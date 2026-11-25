@@ -55,7 +55,7 @@ export function ExternalPushBanner({
 
   const handleEnable = async () => {
     if (disabledDemo) {
-      onNotify('success', 'في البطاقة الحقيقية سيتم تفعيل الإشعارات الخارجية على جهاز ولي الأمر مباشرة.');
+      onNotify('success', 'متاح على البطاقة الفعلية.');
       return;
     }
     setBusy(true);
@@ -66,18 +66,17 @@ export function ExternalPushBanner({
         schoolOwnerId,
         sectionId,
         studentId,
-        welcomeTitle: `تم تفعيل إشعارات ${schoolName}`,
-        welcomeBody: `ستصلك الإشعارات الخارجية لـ ${contextLabel} فوراً على جهازك حتى عند إغلاق الموقع.`,
+        welcomeTitle: schoolName,
+        welcomeBody: `تم تفعيل إشعارات ${contextLabel}.`,
       });
       setPermission('granted');
       setSubscribed(true);
-      onNotify('success', 'تم تفعيل الإشعارات الخارجية بنجاح! ستصلك التنبيهات حتى عند إغلاق الموقع.');
+      onNotify('success', 'تم تفعيل الإشعارات الخارجية.');
     } catch (err) {
       if (typeof window !== 'undefined' && 'Notification' in window) {
         setPermission(Notification.permission);
       }
-      const msg = err instanceof Error ? err.message : 'تعذر تفعيل الإشعارات الخارجية على هذا الجهاز.';
-      onNotify('error', msg);
+      onNotify('error', err instanceof Error ? err.message : 'تعذر تفعيل الإشعارات.');
     } finally {
       setBusy(false);
     }
@@ -89,9 +88,9 @@ export function ExternalPushBanner({
     try {
       await unsubscribeDeviceFromExternalPush(scope, scopeToken);
       setSubscribed(false);
-      onNotify('success', 'تم إيقاف الإشعارات الخارجية على هذا الجهاز.');
+      onNotify('success', 'تم إيقاف الإشعارات الخارجية.');
     } catch {
-      onNotify('error', 'تعذر إيقاف الإشعارات حالياً.');
+      onNotify('error', 'تعذر إيقاف الإشعارات.');
     } finally {
       setBusy(false);
     }
@@ -104,91 +103,72 @@ export function ExternalPushBanner({
         scope === 'stage'
           ? `/?stage=${encodeURIComponent(scopeToken)}`
           : `/?pass=${encodeURIComponent(scopeToken)}`;
-      await sendLocalTestExternalNotification(
-        `إشعار تجريبي — ${schoolName}`,
-        `الإشعارات الخارجية تعمل بنجاح لـ ${contextLabel}. اضغط لفتح البوابة.`,
-        targetUrl
-      );
-      onNotify('success', 'تم إرسال إشعار خارجي تجريبي إلى جهازك الآن.');
+      await sendLocalTestExternalNotification(schoolName, `إشعار تجريبي — ${contextLabel}`, targetUrl);
+      onNotify('success', 'تم إرسال إشعار تجريبي.');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'تعذر إرسال الإشعار التجريبي.';
-      onNotify('error', msg);
+      onNotify('error', err instanceof Error ? err.message : 'تعذر الإرسال.');
     }
   };
 
   return (
-    <section className="no-print bg-white border border-slate-200 rounded-xl p-5">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-start gap-3 min-w-0">
-          <div
-            className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-              subscribed
-                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                : 'bg-slate-100 text-slate-700'
-            }`}
-          >
-            {subscribed ? <CheckCircle2 className="w-5 h-5" /> : <BellRing className="w-5 h-5" />}
-          </div>
+    <section className="no-print bg-white border border-slate-200/80 rounded-xl px-4 py-3.5 flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-2.5 min-w-0">
+        {subscribed ? (
+          <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+        ) : (
+          <BellRing className="w-4 h-4 text-slate-600 shrink-0" />
+        )}
+        <p className="text-xs sm:text-sm font-medium text-slate-800 truncate">
+          {subscribed
+            ? 'الإشعارات الخارجية مفعّلة'
+            : iosNeedsInstall
+              ? 'أضف التطبيق للشاشة الرئيسية لتفعيل الإشعارات'
+              : permission === 'denied'
+                ? 'الإشعارات محظورة من إعدادات المتصفح'
+                : !supported
+                  ? 'افتح الرابط في Chrome أو Safari لتفعيل الإشعارات'
+                  : 'تفعيل الإشعارات الخارجية على الجهاز'}
+        </p>
+      </div>
 
-          <div className="min-w-0">
-            <h2 className="font-display text-sm sm:text-base font-bold text-slate-900">
-              {subscribed
-                ? 'الإشعارات الخارجية مفعّلة على هذا الجهاز'
-                : 'تفعيل الإشعارات الخارجية على جهازك'}
-            </h2>
-            <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
-              {subscribed
-                ? `ستصلك تنبيهات ${schoolName} (${contextLabel}) مباشرة على شاشة الجهاز حتى لو كان الموقع مغلقاً.`
-                : iosNeedsInstall
-                  ? 'على أجهزة iPhone و iPad، أضف الموقع إلى الشاشة الرئيسية أولاً لتفعيل إشعارات شاشة القفل.'
-                  : permission === 'denied'
-                    ? 'تم حظر الإشعارات من إعدادات المتصفح. يمكنك السماح بها من أيقونة القفل في شريط العنوان ثم إعادة المحاولة.'
-                    : !supported
-                      ? 'متصفحك الحالي لا يدعم الإشعارات الخلفية؛ افتح الرابط في Chrome أو Safari الحديث لتفعيلها.'
-                      : 'استلم تنبيهات الغياب والدرجات والرسائل والصور فوراً على شاشة جوالك أو حاسوبك حتى عند إغلاق الموقع.'}
-            </p>
-          </div>
-        </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <PWAInstallButton compact />
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <PWAInstallButton compact />
-
-          {subscribed ? (
-            <>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={handleTest}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>تجربة إشعار</span>
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={handleDisable}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg transition-colors whitespace-nowrap"
-              >
-                <BellOff className="w-3.5 h-3.5" />
-                <span>إيقاف</span>
-              </button>
-            </>
-          ) : (
-            supported &&
-            !iosNeedsInstall && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={handleEnable}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap"
-              >
-                <Smartphone className="w-3.5 h-3.5" />
-                <span>{busy ? 'جاري التفعيل...' : 'تفعيل الإشعارات الخارجية'}</span>
-              </button>
-            )
-          )}
-        </div>
+        {subscribed ? (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleTest}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>تجربة</span>
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleDisable}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <BellOff className="w-3.5 h-3.5" />
+              <span>إيقاف</span>
+            </button>
+          </>
+        ) : (
+          supported &&
+          !iosNeedsInstall && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleEnable}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>{busy ? 'جاري...' : 'تفعيل'}</span>
+            </button>
+          )
+        )}
       </div>
     </section>
   );

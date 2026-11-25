@@ -25,13 +25,15 @@ interface GradeImageUploadPanelProps {
   onNotify: (kind: 'success' | 'error', message: string) => void;
 }
 
-async function compressImageToBase64(file: File): Promise<{ base64: string; mimeType: string; previewUrl: string }> {
+async function compressImageToBase64(
+  file: File
+): Promise<{ base64: string; mimeType: string; previewUrl: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error('تعذر قراءة ملف الصورة.'));
+    reader.onerror = () => reject(new Error('تعذر قراءة الصورة.'));
     reader.onload = () => {
       const img = new Image();
-      img.onerror = () => reject(new Error('الملف ليس صورة صالحة.'));
+      img.onerror = () => reject(new Error('الصورة غير صالحة.'));
       img.onload = () => {
         const maxDim = 1600;
         let width = img.width;
@@ -50,7 +52,7 @@ async function compressImageToBase64(file: File): Promise<{ base64: string; mime
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          reject(new Error('تعذر تجهيز الصورة للمعالجة.'));
+          reject(new Error('تعذر معالجة الصورة.'));
           return;
         }
         ctx.drawImage(img, 0, 0, width, height);
@@ -67,7 +69,6 @@ async function compressImageToBase64(file: File): Promise<{ base64: string; mime
 
 export function GradeImageUploadPanel({
   sectionName,
-  stageName,
   subject,
   maxScore,
   sectionStudents,
@@ -89,7 +90,7 @@ export function GradeImageUploadPanel({
   const handleFileSelected = async (file: File | undefined) => {
     if (!file) return;
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      setErrorMsg('يرجى اختيار صورة بصيغة JPG أو PNG أو WebP.');
+      setErrorMsg('اختر صورة بصيغة JPG أو PNG أو WebP.');
       return;
     }
 
@@ -103,7 +104,7 @@ export function GradeImageUploadPanel({
 
       const idToken = await auth.currentUser?.getIdToken();
       if (!idToken) {
-        throw new Error('يرجى تسجيل الدخول أولاً قبل تحليل كشوف الدرجات.');
+        throw new Error('يرجى تسجيل الدخول أولاً.');
       }
 
       const resp = await fetch('/api/extract-grades', {
@@ -133,7 +134,7 @@ export function GradeImageUploadPanel({
       };
 
       if (!resp.ok) {
-        throw new Error(data.error || 'تعذر قراءة الصورة حالياً.');
+        throw new Error(data.error || 'تعذر قراءة الصورة.');
       }
 
       const extractedRows = Array.isArray(data.rows) ? data.rows : [];
@@ -144,15 +145,12 @@ export function GradeImageUploadPanel({
       });
 
       if (extractedRows.length === 0) {
-        setErrorMsg('لم يتم العثور على درجات واضحة في الصورة. تأكد من إضاءة ووضوح كشف الشعبة.');
+        setErrorMsg('لم تظهر درجات واضحة في الصورة.');
       } else {
-        onNotify(
-          'success',
-          `تم استخراج ${extractedRows.length} سطراً من الصورة. راجع المطابقة ثم اعتمد النشر للجميع.`
-        );
+        onNotify('success', `تم استخراج ${extractedRows.length} سطراً.`);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'تعذر تحليل صورة الكشف.';
+      const msg = err instanceof Error ? err.message : 'تعذر قراءة الصورة.';
       setErrorMsg(msg);
       onNotify('error', msg);
     } finally {
@@ -172,13 +170,11 @@ export function GradeImageUploadPanel({
     for (const r of rows) {
       if (!r.matchedStudentId || r.score === null) continue;
       scores[r.matchedStudentId] = String(r.score);
-      if (r.note.trim()) {
-        notes[r.matchedStudentId] = r.note.trim();
-      }
+      if (r.note.trim()) notes[r.matchedStudentId] = r.note.trim();
     }
 
     if (Object.keys(scores).length === 0) {
-      onNotify('error', 'طابق طالباً واحداً على الأقل بدرجة صالحة قبل الاعتماد.');
+      onNotify('error', 'طابق طالباً واحداً على الأقل.');
       return;
     }
 
@@ -202,17 +198,11 @@ export function GradeImageUploadPanel({
   };
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h3 className="font-display text-base font-bold text-slate-900">
-            قراءة درجات الشعبة من صورة الكشف الورقي
-          </h3>
-          <p className="text-xs text-slate-600 mt-0.5">
-            ارفع صورة كشف درجات <strong>{sectionName}</strong> ({stageName}) لمادة{' '}
-            <strong>{subject}</strong>، وسيستخرج النظام الدرجات ويطابقها مع الطلاب تلقائياً.
-          </p>
-        </div>
+    <div className="bg-white border border-slate-200/80 rounded-xl p-5 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-display text-sm sm:text-base font-bold text-slate-900">
+          كشف {sectionName} · {subject}
+        </h3>
 
         <div>
           <input
@@ -226,69 +216,57 @@ export function GradeImageUploadPanel({
             type="button"
             disabled={extracting || sectionStudents.length === 0}
             onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap"
           >
             {extracting ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <Camera className="w-4 h-4" />
             )}
-            <span>{extracting ? 'جاري قراءة كشف الدرجات...' : 'اختيار أو تصوير كشف الدرجات'}</span>
+            <span>{extracting ? 'جاري القراءة...' : 'رفع صورة الكشف'}</span>
           </button>
         </div>
       </div>
 
       {sectionStudents.length === 0 && (
-        <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
-          أضف طلاباً لهذه الشعبة أولاً لكي يتمكن النظام من مطابقة الأسماء في الصورة تلقائياً.
-        </div>
+        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
+          أضف طلاباً للشعبة أولاً.
+        </p>
       )}
 
       {errorMsg && (
-        <div className="p-3.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-center gap-2">
+        <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-center gap-2">
           <AlertCircle className="w-4 h-4 text-rose-700 shrink-0" />
           <span>{errorMsg}</span>
         </div>
       )}
 
-      {/* Upload Drop Zone when no rows yet */}
       {!previewUrl && !extracting && (
         <button
           type="button"
           disabled={sectionStudents.length === 0}
           onClick={() => fileInputRef.current?.click()}
-          className="w-full py-10 px-6 border-2 border-dashed border-slate-300 hover:border-emerald-600 bg-[#F8F9F7] hover:bg-emerald-50/30 disabled:opacity-50 rounded-xl flex flex-col items-center justify-center text-center transition-colors"
+          className="w-full py-10 px-6 border-2 border-dashed border-slate-200 hover:border-emerald-600/60 bg-[#F7F8F7] hover:bg-emerald-50/30 disabled:opacity-50 rounded-xl flex flex-col items-center justify-center text-center transition-colors"
         >
-          <ImagePlus className="w-8 h-8 text-emerald-700 mb-2.5" />
-          <p className="text-sm font-semibold text-slate-900">
-            اضغط لرفع صورة كشف درجات شعبة كاملة (ورقي أو مطبوع)
-          </p>
-          <p className="text-xs text-slate-500 mt-1">
-            يدعم الخط العربي والأرقام العربية والإنجليزية (JPG / PNG / WebP)
-          </p>
+          <ImagePlus className="w-7 h-7 text-emerald-700 mb-2" />
+          <p className="text-sm font-semibold text-slate-800">اختر أو التقط صورة كشف الدرجات</p>
         </button>
       )}
 
-      {/* Loading State */}
       {extracting && (
-        <div className="p-8 border border-slate-200 rounded-xl bg-slate-50/70 flex flex-col items-center justify-center text-center">
-          <Loader2 className="w-7 h-7 text-emerald-700 animate-spin mb-3" />
-          <p className="text-sm font-semibold text-slate-900">
-            جاري استخراج الأسماء والدرجات ومطابقتها مع طلاب {sectionName}...
-          </p>
-          <p className="text-xs text-slate-500 mt-1">تستغرق القراءة عادةً بضع ثوانٍ فقط.</p>
+        <div className="p-8 border border-slate-200 rounded-xl bg-slate-50/60 flex flex-col items-center justify-center text-center">
+          <Loader2 className="w-6 h-6 text-emerald-700 animate-spin mb-2.5" />
+          <p className="text-sm font-medium text-slate-800">جاري قراءة الدرجات...</p>
         </div>
       )}
 
-      {/* Side-by-Side Image Preview & Verification Table */}
       {!extracting && rows.length > 0 && (
         <div className="space-y-4">
           {(detectedMeta.subject || detectedMeta.maxScore > 0) && (
-            <div className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 flex flex-wrap items-center justify-between gap-3 text-xs text-emerald-950">
+            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-3 text-xs text-emerald-950">
               <span>
-                تم رصد بيانات من ترويسة الكشف:
-                {detectedMeta.subject ? ` المادة (${detectedMeta.subject})` : ''}
-                {detectedMeta.maxScore > 0 ? ` · الدرجة العظمى (${detectedMeta.maxScore})` : ''}
+                {detectedMeta.subject || ''}
+                {detectedMeta.maxScore > 0 ? ` · العظمى ${detectedMeta.maxScore}` : ''}
               </span>
               <button
                 type="button"
@@ -298,54 +276,49 @@ export function GradeImageUploadPanel({
                     maxScore: detectedMeta.maxScore > 0 ? detectedMeta.maxScore : undefined,
                   })
                 }
-                className="font-semibold text-emerald-800 hover:text-emerald-950 underline whitespace-nowrap"
+                className="font-semibold text-emerald-800 underline whitespace-nowrap"
               >
-                تطبيق على إعدادات التقييم
+                تطبيق
               </button>
             </div>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
             {previewUrl && (
               <div className="lg:col-span-4 border border-slate-200 rounded-xl overflow-hidden bg-slate-50">
                 <img
                   src={previewUrl}
-                  alt="صورة كشف الدرجات المرفوعة"
-                  className="w-full max-h-[420px] object-contain"
+                  alt="كشف الدرجات"
+                  className="w-full max-h-[380px] object-contain"
                 />
-                <div className="p-3 border-t border-slate-200 flex items-center justify-between text-xs text-slate-600">
-                  <span>صورة الكشف المرفوعة</span>
+                <div className="p-2.5 border-t border-slate-200 flex justify-end">
                   <button
                     type="button"
                     onClick={() => {
                       setPreviewUrl(null);
                       setRows([]);
                     }}
-                    className="text-rose-700 hover:underline"
+                    className="text-xs text-rose-700 hover:underline"
                   >
-                    إلغاء الصورة
+                    إلغاء
                   </button>
                 </div>
               </div>
             )}
 
             <div className="lg:col-span-8 border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-slate-800">
-                  مراجعة المطابقة ({matchedValidCount} طالب جاهز للنشر من {rows.length})
+              <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-700 font-mono tabular-nums">
+                  {matchedValidCount} / {rows.length}
                 </span>
                 <button
                   type="button"
                   disabled={publishing || matchedValidCount === 0}
                   onClick={handleConfirmPublish}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap"
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded-lg whitespace-nowrap"
                 >
                   <Send className="w-3.5 h-3.5" />
-                  <span>
-                    {publishing
-                      ? 'جاري الاعتماد وتحديث البطاقات...'
-                      : `اعتماد ونشر (${matchedValidCount}) مع إشعار فوري`}
-                  </span>
+                  <span>{publishing ? 'جاري النشر...' : `نشر (${matchedValidCount})`}</span>
                 </button>
               </div>
 
@@ -353,14 +326,13 @@ export function GradeImageUploadPanel({
                 <table className="w-full text-right border-collapse text-xs">
                   <thead>
                     <tr className="border-b border-slate-200 bg-white text-slate-500">
-                      <th className="py-2.5 px-3">الاسم في الصورة</th>
-                      <th className="py-2.5 px-3">الطالب المطابق في الشعبة</th>
-                      <th className="py-2.5 px-3 w-24">الدرجة</th>
-                      <th className="py-2.5 px-3">ملاحظة</th>
-                      <th className="py-2.5 px-2 w-8"></th>
+                      <th className="py-2 px-3">في الصورة</th>
+                      <th className="py-2 px-3">الطالب</th>
+                      <th className="py-2 px-3 w-20">الدرجة</th>
+                      <th className="py-2 px-2 w-8"></th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-200">
+                  <tbody className="divide-y divide-slate-100">
                     {rows.map((row, idx) => {
                       const isMatched = Boolean(row.matchedStudentId);
                       return (
@@ -368,44 +340,33 @@ export function GradeImageUploadPanel({
                           key={`${row.extractedName}_${idx}`}
                           className={isMatched ? 'bg-white' : 'bg-amber-50/40'}
                         >
-                          <td className="py-2.5 px-3">
-                            <p className="font-medium text-slate-900">{row.extractedName || '—'}</p>
-                            <span
-                              className={`text-[11px] inline-flex items-center gap-1 mt-0.5 ${
-                                isMatched && row.confidence === 'high'
-                                  ? 'text-emerald-700'
-                                  : 'text-amber-700'
-                              }`}
-                            >
+                          <td className="py-2 px-3">
+                            <span className="font-medium text-slate-900 inline-flex items-center gap-1">
                               {isMatched && row.confidence === 'high' && (
-                                <CheckCircle2 className="w-3 h-3" />
+                                <CheckCircle2 className="w-3 h-3 text-emerald-700 shrink-0" />
                               )}
-                              {isMatched
-                                ? row.confidence === 'high'
-                                  ? 'مطابق بدقة'
-                                  : 'تحقق من المطابقة'
-                                : 'غير مطابق — اختر طالباً'}
+                              <span>{row.extractedName || '—'}</span>
                             </span>
                           </td>
 
-                          <td className="py-2.5 px-3">
+                          <td className="py-2 px-3">
                             <select
                               value={row.matchedStudentId}
                               onChange={(e) =>
                                 handleUpdateRow(idx, { matchedStudentId: e.target.value })
                               }
-                              className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-none focus:border-emerald-700"
+                              className="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:border-emerald-700"
                             >
-                              <option value="">— تجاهل هذا الصف —</option>
+                              <option value="">— تجاهل —</option>
                               {sectionStudents.map((stu) => (
                                 <option key={stu.id} value={stu.id}>
-                                  {stu.fullName} ({stu.studentCode})
+                                  {stu.fullName}
                                 </option>
                               ))}
                             </select>
                           </td>
 
-                          <td className="py-2.5 px-3">
+                          <td className="py-2 px-3">
                             <input
                               type="number"
                               step="0.5"
@@ -414,29 +375,19 @@ export function GradeImageUploadPanel({
                               value={row.score === null ? '' : row.score}
                               onChange={(e) =>
                                 handleUpdateRow(idx, {
-                                  score: e.target.value.trim() === '' ? null : Number(e.target.value),
+                                  score:
+                                    e.target.value.trim() === '' ? null : Number(e.target.value),
                                 })
                               }
-                              className="w-20 px-2 py-1.5 text-xs font-mono tabular-nums text-center border border-slate-300 rounded-md focus:outline-none focus:border-emerald-700"
+                              className="w-20 px-2 py-1 text-xs font-mono tabular-nums text-center border border-slate-200 rounded-md focus:outline-none focus:border-emerald-700"
                             />
                           </td>
 
-                          <td className="py-2.5 px-3">
-                            <input
-                              type="text"
-                              value={row.note}
-                              maxLength={200}
-                              onChange={(e) => handleUpdateRow(idx, { note: e.target.value })}
-                              placeholder="ملاحظة..."
-                              className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-700"
-                            />
-                          </td>
-
-                          <td className="py-2.5 px-2 text-center">
+                          <td className="py-2 px-2 text-center">
                             <button
                               type="button"
                               onClick={() => handleRemoveRow(idx)}
-                              title="حذف السطر"
+                              aria-label="حذف"
                               className="p-1 text-slate-400 hover:text-rose-700"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
