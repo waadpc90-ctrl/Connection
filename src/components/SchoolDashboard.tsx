@@ -2,22 +2,26 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { User } from 'firebase/auth';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import {
+  ArrowRight,
   Award,
   ClipboardCheck,
   Copy,
   ExternalLink,
   LayoutDashboard,
+  Lock,
   LogOut,
   Megaphone,
   Menu,
   QrCode,
   Settings,
+  ShieldAlert,
   X,
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import {
   buildParentsPortalUrl,
   ensureSchoolDocument,
+  resolveAdminSchoolAccess,
   seedDemoSchoolData,
   syncStagePortalsMetadata,
 } from '../lib/wisaalService';
@@ -30,10 +34,13 @@ import {
   resolveRecordStageId,
   School,
   SchoolTab,
+  STAFF_ROLE_LABELS,
+  StaffMember,
   STAGE_IDS,
   StageId,
   Student,
 } from '../types/wisaal';
+import { AdminPinGate } from './AdminPinGate';
 import { AttendanceTab } from './AttendanceTab';
 import { GradesTab } from './GradesTab';
 import { OverviewTab } from './OverviewTab';
@@ -46,7 +53,7 @@ interface SchoolDashboardProps {
   onSignOut: () => void;
   onPreviewPass: (passToken: string) => void;
   onPreviewStagePortal: (stageToken: string) => void;
-  onOpenParentsPortal: (schoolId: string) => void;
+  onOpenParentsPortal: (schoolId?: string) => void;
   onNotify: (kind: 'success' | 'error', message: string) => void;
 }
 
@@ -75,128 +82,219 @@ export function SchoolDashboard({
   onOpenParentsPortal,
   onNotify,
 }: SchoolDashboardProps) {
-  const uid = user.uid;
   const [activeTab, setActiveTab] = useState<SchoolTab>('overview');
   const [activeStageId, setActiveStageId] = useState<StageId>('stage_1');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+
+  const [accessState, setAccessState] = useState<
+    'checking' | 'authorized' | 'unauthorized'
+  >('checking');
+  const [schoolId, setSchoolId] = useState<string | null>(null);
+  const [isSchoolOwner, setIsSchoolOwner] = useState<boolean>(false);
+  const [currentStaffMember, setCurrentStaffMember] = useState<StaffMember | null>(null);
+  const [isPinUnlocked, setIsPinUnlocked] = useState<boolean>(false);
 
   const [school, setSchool] = useState<School | null>(null);
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceLog[]>([]);
   const [gradeEntries, setGradeEntries] = useState<GradeEntry[]>([]);
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [seeding, setSeeding] = useState<boolean>(false);
 
+  // Step 1: Resolve whether signed-in Google account is the school owner or an added admin staff member
   useEffect(() => {
     let active = true;
-    const unsubs: (() => void)[] = [];
+    setAccessState('checking');
+    setIsPinUnlocked(false);
+    setSchool(null);
+    setSchoolId(null);
+    setCurrentStaffMember(null);
+    setLoading(true);
 
-    const setup = async () => {
+    const checkAccess = async () => {
       try {
-        await ensureSchoolDocument(uid);
+        const res = await resolveAdminSchoolAccess(user.uid, user.email);
+        if (!active) return;
+
+        if (res.status === 'unauthorized') {
+          setAccessState('unauthorized');
+          setLoading(false);
+          return;
+        }
+
+        if (res.status === 'owner_new') {
+          await ensureSchoolDocument(res.schoolId);
+          if (!active) return;
+          setSchoolId(res.schoolId);
+          setIsSchoolOwner(true);
+          setAccessState('authorized');
+          return;
+        }
+
+        if (res.status === 'owner') {
+          await ensureSchoolDocument(res.schoolId);
+          if (!active) return;
+          setSchoolId(res.schoolId);
+          setIsSchoolOwner(true);
+          setAccessState('authorized');
+          return;
+        }
+
+        // Staff member
+        setSchoolId(res.schoolId);
+        setIsSchoolOwner(false);
+        setCurrentStaffMember(res.staffMember);
+        setAccessState('authorized');
       } catch (err) {
-        console.error('School init failed:', err);
-        if (active) setLoading(false);
-        return;
+        console.error('Admin access resolution failed:', err);
+        if (active) {
+          setAccessState('unauthorized');
+          setLoading(false);
+        }
       }
-
-      if (!active) return;
-
-      const schoolRef = doc(db, 'schools', uid);
-      unsubs.push(
-        onSnapshot(
-          schoolRef,
-          (snap) => {
-            if (snap.exists()) {
-              setSchool({ id: snap.id, ...(snap.data() as Omit<School, 'id'>) });
-            }
-            setLoading(false);
-          },
-          (err) => handleFirestoreError(err, OperationType.GET, `schools/${uid}`)
-        )
-      );
-
-      const classesQ = query(
-        collection(db, 'schools', uid, 'classrooms'),
-        where('ownerId', '==', uid)
-      );
-      unsubs.push(
-        onSnapshot(
-          classesQ,
-          (snap) => {
-            setClassrooms(
-              snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Classroom, 'id'>) }))
-            );
-          },
-          (err) => handleFirestoreError(err, OperationType.LIST, `schools/${uid}/classrooms`)
-        )
-      );
-
-      const studentsQ = query(
-        collection(db, 'schools', uid, 'students'),
-        where('ownerId', '==', uid)
-      );
-      unsubs.push(
-        onSnapshot(
-          studentsQ,
-          (snap) => {
-            setStudents(
-              snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Student, 'id'>) }))
-            );
-          },
-          (err) => handleFirestoreError(err, OperationType.LIST, `schools/${uid}/students`)
-        )
-      );
-
-      const logsQ = query(
-        collection(db, 'schools', uid, 'attendanceLogs'),
-        where('ownerId', '==', uid)
-      );
-      unsubs.push(
-        onSnapshot(
-          logsQ,
-          (snap) => {
-            setAttendanceLogs(
-              snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<AttendanceLog, 'id'>) }))
-            );
-          },
-          (err) => handleFirestoreError(err, OperationType.LIST, `schools/${uid}/attendanceLogs`)
-        )
-      );
-
-      const gradesQ = query(
-        collection(db, 'schools', uid, 'gradeEntries'),
-        where('ownerId', '==', uid)
-      );
-      unsubs.push(
-        onSnapshot(
-          gradesQ,
-          (snap) => {
-            setGradeEntries(
-              snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<GradeEntry, 'id'>) }))
-            );
-          },
-          (err) => handleFirestoreError(err, OperationType.LIST, `schools/${uid}/gradeEntries`)
-        )
-      );
     };
 
-    void setup();
-
+    void checkAccess();
     return () => {
       active = false;
+    };
+  }, [user.uid, user.email]);
+
+  // Step 2: Subscribe to school root doc (for PIN hash & school metadata)
+  useEffect(() => {
+    if (accessState !== 'authorized' || !schoolId) return;
+
+    const schoolRef = doc(db, 'schools', schoolId);
+    const unsub = onSnapshot(
+      schoolRef,
+      (snap) => {
+        if (snap.exists()) {
+          setSchool({ id: snap.id, ...(snap.data() as Omit<School, 'id'>) });
+        } else {
+          setSchool(null);
+        }
+        setLoading(false);
+      },
+      (err) => {
+        setLoading(false);
+        handleFirestoreError(err, OperationType.GET, `schools/${schoolId}`);
+      }
+    );
+
+    return () => unsub();
+  }, [accessState, schoolId]);
+
+  // Step 3: Only subscribe to private school subcollections AFTER PIN is unlocked in memory
+  useEffect(() => {
+    if (accessState !== 'authorized' || !schoolId || !isPinUnlocked) {
+      setClassrooms([]);
+      setStudents([]);
+      setAttendanceLogs([]);
+      setGradeEntries([]);
+      setStaffMembers([]);
+      return;
+    }
+
+    const unsubs: (() => void)[] = [];
+
+    const classesQ = query(
+      collection(db, 'schools', schoolId, 'classrooms'),
+      where('ownerId', '==', schoolId)
+    );
+    unsubs.push(
+      onSnapshot(
+        classesQ,
+        (snap) => {
+          setClassrooms(
+            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Classroom, 'id'>) }))
+          );
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, `schools/${schoolId}/classrooms`)
+      )
+    );
+
+    const studentsQ = query(
+      collection(db, 'schools', schoolId, 'students'),
+      where('ownerId', '==', schoolId)
+    );
+    unsubs.push(
+      onSnapshot(
+        studentsQ,
+        (snap) => {
+          setStudents(
+            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Student, 'id'>) }))
+          );
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, `schools/${schoolId}/students`)
+      )
+    );
+
+    const logsQ = query(
+      collection(db, 'schools', schoolId, 'attendanceLogs'),
+      where('ownerId', '==', schoolId)
+    );
+    unsubs.push(
+      onSnapshot(
+        logsQ,
+        (snap) => {
+          setAttendanceLogs(
+            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<AttendanceLog, 'id'>) }))
+          );
+        },
+        (err) =>
+          handleFirestoreError(err, OperationType.LIST, `schools/${schoolId}/attendanceLogs`)
+      )
+    );
+
+    const gradesQ = query(
+      collection(db, 'schools', schoolId, 'gradeEntries'),
+      where('ownerId', '==', schoolId)
+    );
+    unsubs.push(
+      onSnapshot(
+        gradesQ,
+        (snap) => {
+          setGradeEntries(
+            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<GradeEntry, 'id'>) }))
+          );
+        },
+        (err) =>
+          handleFirestoreError(err, OperationType.LIST, `schools/${schoolId}/gradeEntries`)
+      )
+    );
+
+    if (isSchoolOwner) {
+      const staffQ = query(
+        collection(db, 'staffMembers'),
+        where('ownerId', '==', schoolId)
+      );
+      unsubs.push(
+        onSnapshot(
+          staffQ,
+          (snap) => {
+            setStaffMembers(
+              snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<StaffMember, 'id'>) }))
+            );
+          },
+          (err) => handleFirestoreError(err, OperationType.LIST, 'staffMembers')
+        )
+      );
+    }
+
+    return () => {
       unsubs.forEach((u) => u());
     };
-  }, [uid]);
+  }, [accessState, schoolId, isPinUnlocked, isSchoolOwner]);
 
   const lastPortalSyncSigRef = useRef<string>('');
 
   const handleSeedDemo = async () => {
-    if (!school) return;
+    if (!school || !schoolId) return;
     setSeeding(true);
     try {
-      await seedDemoSchoolData(uid, school);
+      await seedDemoSchoolData(schoolId, school);
       onNotify('success', 'تم إضافة البيانات النموذجية للمراحل الثلاث.');
     } catch {
       onNotify('error', 'تعذر تحميل البيانات النموذجية.');
@@ -206,7 +304,7 @@ export function SchoolDashboard({
   };
 
   useEffect(() => {
-    if (!school?.stageTokens) return;
+    if (!school?.stageTokens || !schoolId || !isPinUnlocked) return;
     const classSig = classrooms
       .map((c) => `${c.id}:${c.name}:${resolveClassroomStageId(c)}`)
       .sort()
@@ -225,10 +323,10 @@ export function SchoolDashboard({
     lastPortalSyncSigRef.current = sig;
 
     const timer = window.setTimeout(() => {
-      syncStagePortalsMetadata(uid, school, classrooms, students).catch(() => {});
+      syncStagePortalsMetadata(schoolId, school, classrooms, students).catch(() => {});
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [uid, school, classrooms, students]);
+  }, [schoolId, school, classrooms, students, isPinUnlocked]);
 
   const stageNames = useMemo(() => getSchoolStageNames(school), [school]);
   const activeStageName = stageNames[activeStageId];
@@ -291,6 +389,100 @@ export function SchoolDashboard({
     setMobileMenuOpen(false);
   };
 
+  // Loading access resolution or school root doc
+  if (accessState === 'checking' || (accessState === 'authorized' && loading)) {
+    return (
+      <div className="min-h-screen bg-[#F7F8F7] flex items-center justify-center p-6">
+        <div className="text-center">
+          <p className="font-display text-2xl font-bold text-slate-900 mb-2">وصال</p>
+          <p className="text-sm text-slate-500">جاري التحقق من صلاحية الدخول...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Unauthorized Google account (not owner and not added to administration staff)
+  if (accessState === 'unauthorized' || !schoolId || !school) {
+    return (
+      <div className="min-h-screen bg-[#F7F8F7] text-slate-900 flex flex-col">
+        <header className="bg-white/95 border-b border-slate-200/80">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
+            <span className="font-display text-lg font-bold text-slate-900">وصال</span>
+            <button
+              type="button"
+              onClick={() => onOpenParentsPortal()}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-slate-900"
+            >
+              <ArrowRight className="w-4 h-4" />
+              <span>واجهة أولياء الأمور</span>
+            </button>
+          </div>
+        </header>
+
+        <main className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-sm w-full bg-white border border-slate-200/80 rounded-xl p-7 text-center space-y-4">
+            <div className="w-11 h-11 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 flex items-center justify-center mx-auto">
+              <ShieldAlert className="w-5 h-5" />
+            </div>
+            <h1 className="font-display text-lg font-bold text-slate-900">
+              الحساب غير مصرح له
+            </h1>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              الحساب{' '}
+              <span className="font-mono text-slate-900" dir="ltr">
+                {user.email}
+              </span>{' '}
+              غير مضاف ضمن أعضاء الإدارة. اطلب من مدير المدرسة إضافة بريدك من الإعدادات.
+            </p>
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={onSignOut}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>تبديل الحساب</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenParentsPortal()}
+                className="px-4 py-2.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
+              >
+                الأولياء
+              </button>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // Admin PIN Lock Gate (always locked until unlocked in memory for this session)
+  if (!isPinUnlocked) {
+    const hasPinConfigured = Boolean(school.adminPinHash && school.adminPinSalt);
+    return (
+      <AdminPinGate
+        schoolId={schoolId}
+        schoolName={school.name}
+        userEmail={user.email || ''}
+        isSchoolOwner={isSchoolOwner}
+        hasPinConfigured={hasPinConfigured}
+        pinHash={school.adminPinHash}
+        pinSalt={school.adminPinSalt}
+        onUnlocked={() => setIsPinUnlocked(true)}
+        onSignOut={onSignOut}
+        onBackToParents={() => onOpenParentsPortal(schoolId)}
+        onNotify={onNotify}
+      />
+    );
+  }
+
+  const roleLabel = isSchoolOwner
+    ? 'مدير المدرسة'
+    : currentStaffMember
+      ? STAFF_ROLE_LABELS[currentStaffMember.role]
+      : 'عضو إدارة';
+
   return (
     <div className="min-h-screen bg-[#F7F8F7] text-slate-900 flex">
       {/* Desktop Sidebar */}
@@ -299,13 +491,22 @@ export function SchoolDashboard({
           <span className="font-display text-xl font-bold text-slate-900 whitespace-nowrap">
             وصال
           </span>
+          <button
+            type="button"
+            onClick={() => setIsPinUnlocked(false)}
+            title="قفل لوحة الإدارة"
+            aria-label="قفل لوحة الإدارة"
+            className="p-1.5 text-slate-500 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition-colors"
+          >
+            <Lock className="w-4 h-4" />
+          </button>
         </div>
 
         <div className="px-5 py-3.5 border-b border-slate-100">
-          <p className="text-sm font-semibold text-slate-900 truncate">
-            {school?.name || '...'}
+          <p className="text-sm font-semibold text-slate-900 truncate">{school.name}</p>
+          <p className="text-xs text-slate-500 mt-0.5 truncate">
+            {roleLabel} · {school.academicYear}
           </p>
-          <p className="text-xs text-slate-500 mt-0.5 truncate">{school?.academicYear || ''}</p>
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -323,7 +524,9 @@ export function SchoolDashboard({
                     : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
                 }`}
               >
-                <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-emerald-700' : 'text-slate-400'}`} />
+                <Icon
+                  className={`w-4 h-4 shrink-0 ${active ? 'text-emerald-700' : 'text-slate-400'}`}
+                />
                 <span>{item.label}</span>
               </button>
             );
@@ -334,7 +537,7 @@ export function SchoolDashboard({
           <div className="grid grid-cols-2 gap-1.5">
             <button
               type="button"
-              onClick={() => onOpenParentsPortal(uid)}
+              onClick={() => onOpenParentsPortal(schoolId)}
               className="inline-flex items-center justify-center gap-1 px-2 py-2 text-xs font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors whitespace-nowrap"
             >
               <ExternalLink className="w-3.5 h-3.5 shrink-0" />
@@ -344,7 +547,7 @@ export function SchoolDashboard({
               type="button"
               onClick={() => {
                 navigator.clipboard
-                  ?.writeText(buildParentsPortalUrl(uid))
+                  ?.writeText(buildParentsPortalUrl(schoolId))
                   .then(() => onNotify('success', 'تم نسخ رابط بوابة الأولياء.'))
                   .catch(() => onNotify('error', 'تعذر النسخ.'));
               }}
@@ -357,14 +560,24 @@ export function SchoolDashboard({
           <p className="text-xs font-medium text-slate-500 truncate pt-1" dir="ltr">
             {user.email}
           </p>
-          <button
-            type="button"
-            onClick={onSignOut}
-            className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>خروج</span>
-          </button>
+          <div className="grid grid-cols-2 gap-1.5">
+            <button
+              type="button"
+              onClick={() => setIsPinUnlocked(false)}
+              className="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>قفل</span>
+            </button>
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>خروج</span>
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -381,6 +594,10 @@ export function SchoolDashboard({
               >
                 <X className="w-5 h-5" />
               </button>
+            </div>
+            <div className="px-5 py-3 border-b border-slate-100">
+              <p className="text-xs font-semibold text-slate-900 truncate">{school.name}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5 truncate">{roleLabel}</p>
             </div>
             <nav className="flex-1 p-3 space-y-1">
               {NAV_ITEMS.map((item) => {
@@ -408,21 +625,34 @@ export function SchoolDashboard({
                 type="button"
                 onClick={() => {
                   setMobileMenuOpen(false);
-                  onOpenParentsPortal(uid);
+                  onOpenParentsPortal(schoolId);
                 }}
                 className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
                 <span>واجهة أولياء الأمور</span>
               </button>
-              <button
-                type="button"
-                onClick={onSignOut}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-lg"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>خروج</span>
-              </button>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    setIsPinUnlocked(false);
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-lg"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>قفل</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-lg"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>خروج</span>
+                </button>
+              </div>
             </div>
           </div>
           <div className="flex-1 bg-slate-900/35" onClick={() => setMobileMenuOpen(false)} />
@@ -446,35 +676,47 @@ export function SchoolDashboard({
             </h1>
           </div>
 
-          {!loading && school && activeTab !== 'settings' && (
-            <div className="hidden md:inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg shrink-0">
-              {STAGE_IDS.map((sid) => {
-                const isActive = activeStageId === sid;
-                const stat = stageStats[sid];
-                return (
-                  <button
-                    key={sid}
-                    type="button"
-                    onClick={() => setActiveStageId(sid)}
-                    className={`px-3 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap ${
-                      isActive
-                        ? 'bg-white text-slate-900 font-semibold shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900 font-medium'
-                    }`}
-                  >
-                    <span>{stageNames[sid]}</span>
-                    <span className="font-mono tabular-nums text-[11px] text-slate-400 mr-1.5">
-                      {stat.students}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {activeTab !== 'settings' && (
+              <div className="hidden md:inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg shrink-0">
+                {STAGE_IDS.map((sid) => {
+                  const isActive = activeStageId === sid;
+                  const stat = stageStats[sid];
+                  return (
+                    <button
+                      key={sid}
+                      type="button"
+                      onClick={() => setActiveStageId(sid)}
+                      className={`px-3 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap ${
+                        isActive
+                          ? 'bg-white text-slate-900 font-semibold shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900 font-medium'
+                      }`}
+                    >
+                      <span>{stageNames[sid]}</span>
+                      <span className="font-mono tabular-nums text-[11px] text-slate-400 mr-1.5">
+                        {stat.students}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setIsPinUnlocked(false)}
+              title="قفل لوحة الإدارة"
+              aria-label="قفل لوحة الإدارة"
+              className="lg:hidden p-2 text-slate-600 hover:text-emerald-800 hover:bg-emerald-50 border border-slate-200 rounded-lg transition-colors"
+            >
+              <Lock className="w-4 h-4" />
+            </button>
+          </div>
         </header>
 
         {/* Mobile Stage Switcher */}
-        {!loading && school && activeTab !== 'settings' && (
+        {activeTab !== 'settings' && (
           <div className="no-print md:hidden bg-white border-b border-slate-200/80 px-4 py-2.5">
             <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-lg">
               {STAGE_IDS.map((sid) => {
@@ -499,107 +741,101 @@ export function SchoolDashboard({
         )}
 
         <main className="flex-1 p-4 sm:p-8 max-w-5xl w-full mx-auto">
-          {loading || !school ? (
-            <div className="space-y-4">
-              <div className="h-24 bg-white border border-slate-200 rounded-xl animate-pulse" />
-              <div className="h-64 bg-white border border-slate-200 rounded-xl animate-pulse" />
-            </div>
-          ) : (
-            <>
-              {activeTab === 'overview' && (
-                <OverviewTab
-                  school={school}
-                  stageId={activeStageId}
-                  stageName={activeStageName}
-                  stageToken={activeStageToken}
-                  totalSchoolStudents={students.length}
-                  classrooms={stageClassrooms}
-                  students={stageStudents}
-                  attendanceLogs={stageAttendanceLogs}
-                  gradeEntries={stageGradeEntries}
-                  seeding={seeding}
-                  onSeedDemo={handleSeedDemo}
-                  onNavigate={setActiveTab}
-                  onPreviewPass={onPreviewPass}
-                  onPreviewStagePortal={onPreviewStagePortal}
-                />
-              )}
+          {activeTab === 'overview' && (
+            <OverviewTab
+              school={school}
+              stageId={activeStageId}
+              stageName={activeStageName}
+              stageToken={activeStageToken}
+              totalSchoolStudents={students.length}
+              classrooms={stageClassrooms}
+              students={stageStudents}
+              attendanceLogs={stageAttendanceLogs}
+              gradeEntries={stageGradeEntries}
+              seeding={seeding}
+              onSeedDemo={handleSeedDemo}
+              onNavigate={setActiveTab}
+              onPreviewPass={onPreviewPass}
+              onPreviewStagePortal={onPreviewStagePortal}
+            />
+          )}
 
-              {activeTab === 'stage-broadcasts' && (
-                <StageBroadcastsTab
-                  uid={uid}
-                  school={school}
-                  activeStageId={activeStageId}
-                  activeStageName={activeStageName}
-                  allClassrooms={classrooms}
-                  allStudents={students}
-                  stageClassrooms={stageClassrooms}
-                  stageStudents={stageStudents}
-                  onPreviewStagePortal={onPreviewStagePortal}
-                  onPreviewPass={onPreviewPass}
-                  onNotify={onNotify}
-                />
-              )}
+          {activeTab === 'stage-broadcasts' && (
+            <StageBroadcastsTab
+              uid={schoolId}
+              school={school}
+              activeStageId={activeStageId}
+              activeStageName={activeStageName}
+              allClassrooms={classrooms}
+              allStudents={students}
+              stageClassrooms={stageClassrooms}
+              stageStudents={stageStudents}
+              onPreviewStagePortal={onPreviewStagePortal}
+              onPreviewPass={onPreviewPass}
+              onNotify={onNotify}
+            />
+          )}
 
-              {activeTab === 'attendance' && (
-                <AttendanceTab
-                  uid={uid}
-                  school={school}
-                  stageId={activeStageId}
-                  stageName={activeStageName}
-                  stageToken={activeStageToken}
-                  classrooms={stageClassrooms}
-                  students={stageStudents}
-                  attendanceLogs={stageAttendanceLogs}
-                  gradeEntries={stageGradeEntries}
-                  onPreviewPass={onPreviewPass}
-                  onPreviewStagePortal={onPreviewStagePortal}
-                  onNotify={onNotify}
-                />
-              )}
+          {activeTab === 'attendance' && (
+            <AttendanceTab
+              uid={schoolId}
+              school={school}
+              stageId={activeStageId}
+              stageName={activeStageName}
+              stageToken={activeStageToken}
+              classrooms={stageClassrooms}
+              students={stageStudents}
+              attendanceLogs={stageAttendanceLogs}
+              gradeEntries={stageGradeEntries}
+              onPreviewPass={onPreviewPass}
+              onPreviewStagePortal={onPreviewStagePortal}
+              onNotify={onNotify}
+            />
+          )}
 
-              {activeTab === 'grades' && (
-                <GradesTab
-                  uid={uid}
-                  school={school}
-                  stageId={activeStageId}
-                  stageName={activeStageName}
-                  stageToken={activeStageToken}
-                  classrooms={stageClassrooms}
-                  students={stageStudents}
-                  attendanceLogs={stageAttendanceLogs}
-                  gradeEntries={stageGradeEntries}
-                  onPreviewPass={onPreviewPass}
-                  onPreviewStagePortal={onPreviewStagePortal}
-                  onNotify={onNotify}
-                />
-              )}
+          {activeTab === 'grades' && (
+            <GradesTab
+              uid={schoolId}
+              school={school}
+              stageId={activeStageId}
+              stageName={activeStageName}
+              stageToken={activeStageToken}
+              classrooms={stageClassrooms}
+              students={stageStudents}
+              attendanceLogs={stageAttendanceLogs}
+              gradeEntries={stageGradeEntries}
+              onPreviewPass={onPreviewPass}
+              onPreviewStagePortal={onPreviewStagePortal}
+              onNotify={onNotify}
+            />
+          )}
 
-              {activeTab === 'students' && (
-                <StudentsQrTab
-                  uid={uid}
-                  school={school}
-                  stageId={activeStageId}
-                  stageName={activeStageName}
-                  classrooms={stageClassrooms}
-                  students={stageStudents}
-                  onPreviewPass={onPreviewPass}
-                  onNotify={onNotify}
-                />
-              )}
+          {activeTab === 'students' && (
+            <StudentsQrTab
+              uid={schoolId}
+              school={school}
+              stageId={activeStageId}
+              stageName={activeStageName}
+              classrooms={stageClassrooms}
+              students={stageStudents}
+              onPreviewPass={onPreviewPass}
+              onNotify={onNotify}
+            />
+          )}
 
-              {activeTab === 'settings' && (
-                <SettingsTab
-                  uid={uid}
-                  school={school}
-                  classrooms={classrooms}
-                  students={students}
-                  seeding={seeding}
-                  onSeedDemo={handleSeedDemo}
-                  onNotify={onNotify}
-                />
-              )}
-            </>
+          {activeTab === 'settings' && (
+            <SettingsTab
+              uid={schoolId}
+              currentUserUid={user.uid}
+              isSchoolOwner={isSchoolOwner}
+              staffMembers={staffMembers}
+              school={school}
+              classrooms={classrooms}
+              students={students}
+              seeding={seeding}
+              onSeedDemo={handleSeedDemo}
+              onNotify={onNotify}
+            />
           )}
         </main>
       </div>

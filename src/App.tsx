@@ -8,6 +8,11 @@ import {
   User,
 } from 'firebase/auth';
 import { auth, googleProvider } from './lib/firebase';
+import {
+  clearLockedStageToken,
+  readLockedStageToken,
+  saveLockedStageToken,
+} from './lib/adminSecurity';
 import { DEMO_PARENT_PASS, DEMO_STAGE_PORTAL } from './data/demoPassData';
 import { AdminLoginView } from './components/AdminLoginView';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -44,6 +49,11 @@ function readInitialModeFromUrl(): 'parents' | 'admin' {
   return 'parents';
 }
 
+function hasExplicitParentsParam(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('parents') === '1';
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(false);
@@ -61,6 +71,20 @@ export default function App() {
   const [urlStageToken, setUrlStageToken] = useState<string | null>(() =>
     readTokenFromUrl('stage')
   );
+  // Persisted stage lock when parent connected via a Stage QR barcode (shows ONLY that stage)
+  const [lockedStageToken, setLockedStageToken] = useState<string | null>(() => {
+    const fromUrl = readTokenFromUrl('stage');
+    if (fromUrl) {
+      saveLockedStageToken(fromUrl);
+      return fromUrl;
+    }
+    if (hasExplicitParentsParam()) {
+      clearLockedStageToken();
+      return null;
+    }
+    return readLockedStageToken();
+  });
+
   const [activePassToken, setActivePassToken] = useState<string | null>(null);
   const [activeStageToken, setActiveStageToken] = useState<string | null>(null);
   const [previewDemoPass, setPreviewDemoPass] = useState<boolean>(false);
@@ -110,8 +134,16 @@ export default function App() {
 
   useEffect(() => {
     const handlePop = () => {
+      const nextStage = readTokenFromUrl('stage');
+      if (nextStage) {
+        saveLockedStageToken(nextStage);
+        setLockedStageToken(nextStage);
+      } else if (hasExplicitParentsParam()) {
+        clearLockedStageToken();
+        setLockedStageToken(null);
+      }
       setUrlPassToken(readTokenFromUrl('pass'));
-      setUrlStageToken(readTokenFromUrl('stage'));
+      setUrlStageToken(nextStage);
       setSchoolParam(readSchoolParamFromUrl());
       setAppMode(readInitialModeFromUrl());
     };
@@ -177,8 +209,12 @@ export default function App() {
   };
 
   const clearUrlTokensToParents = () => {
+    clearLockedStageToken();
+    setLockedStageToken(null);
     const base = `${window.location.origin}${window.location.pathname}`;
-    const nextUrl = schoolParam ? `${base}?parents=1&school=${encodeURIComponent(schoolParam)}` : base;
+    const nextUrl = schoolParam
+      ? `${base}?parents=1&school=${encodeURIComponent(schoolParam)}`
+      : `${base}?parents=1`;
     window.history.replaceState({}, '', nextUrl);
     setUrlPassToken(null);
     setUrlStageToken(null);
@@ -202,6 +238,8 @@ export default function App() {
   };
 
   const switchToParentsInterface = (targetSchoolId?: string) => {
+    clearLockedStageToken();
+    setLockedStageToken(null);
     const base = `${window.location.origin}${window.location.pathname}`;
     const nextSchool = targetSchoolId ?? schoolParam;
     if (targetSchoolId) setSchoolParam(targetSchoolId);
@@ -219,33 +257,43 @@ export default function App() {
   };
 
   const renderContent = () => {
-    // 1. Direct Stage QR Broadcast Portal via URL (?stage=...) — Parents Only
+    // 1. Live Student Card opened from a Stage Portal, Parents Portal, or Admin Preview
+    if (activePassToken) {
+      return (
+        <ParentPassView
+          passToken={activePassToken}
+          onExit={() => setActivePassToken(null)}
+          onNotify={notify}
+        />
+      );
+    }
+
+    // 2. Direct Stage QR Broadcast Portal via URL (?stage=...) — Strictly Locked to THAT Stage Only
     if (urlStageToken) {
       return (
         <StagePortalView
           stageToken={urlStageToken}
+          lockedToStage
           onExit={clearUrlTokensToParents}
-          onOpenStudentPass={(pt) => {
-            setUrlStageToken(null);
-            setActivePassToken(pt);
-          }}
+          onOpenStudentPass={(pt) => setActivePassToken(pt)}
           onNotify={notify}
         />
       );
     }
 
-    // 2. Direct Parent Smart Pass via URL (?pass=...) — Parents Inquiry Only
+    // 3. Direct Parent Smart Pass via URL (?pass=...) — Locked to Student Card Only
     if (urlPassToken) {
       return (
         <ParentPassView
           passToken={urlPassToken}
+          lockedToPass
           onExit={clearUrlTokensToParents}
           onNotify={notify}
         />
       );
     }
 
-    // 3. Demo Stage Portal selected from Parents Portal
+    // 4. Demo Stage Portal selected from Parents Portal
     if (previewDemoStage) {
       return (
         <StagePortalView
@@ -264,7 +312,7 @@ export default function App() {
       );
     }
 
-    // 4. Demo Student Card selected from Parents Portal
+    // 5. Demo Student Card selected from Parents Portal
     if (previewDemoPass) {
       return (
         <ParentPassView
@@ -275,7 +323,7 @@ export default function App() {
       );
     }
 
-    // 5. Live Stage Portal opened from Parents Portal or Admin Preview
+    // 6. Live Stage Portal opened from Parents Portal or Admin Preview (can return via Back)
     if (activeStageToken) {
       return (
         <StagePortalView
@@ -290,19 +338,21 @@ export default function App() {
       );
     }
 
-    // 6. Live Student Card opened from Parents Portal or Admin Preview
-    if (activePassToken) {
-      return (
-        <ParentPassView
-          passToken={activePassToken}
-          onExit={() => setActivePassToken(null)}
-          onNotify={notify}
-        />
-      );
-    }
-
-    // 7. Dedicated Parents Interface (Inquiry Only — Default View at '/')
+    // 7. Dedicated Parents Interface (Default View at '/')
     if (appMode === 'parents') {
+      // If this parent previously connected via a Stage QR barcode, keep them strictly inside THAT stage ONLY
+      if (lockedStageToken) {
+        return (
+          <StagePortalView
+            stageToken={lockedStageToken}
+            lockedToStage
+            onExit={clearUrlTokensToParents}
+            onOpenStudentPass={(pt) => setActivePassToken(pt)}
+            onNotify={notify}
+          />
+        );
+      }
+
       return (
         <ParentHomeView
           schoolId={schoolParam}
@@ -329,7 +379,7 @@ export default function App() {
       );
     }
 
-    // 9. Admin Interface — Authenticated Recording & Management Dashboard
+    // 9. Admin Interface — Authenticated & PIN-Locked Recording & Management Dashboard
     if (user) {
       return (
         <SchoolDashboard

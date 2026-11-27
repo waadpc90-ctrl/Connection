@@ -112,6 +112,27 @@ export interface SubjectSummary {
   latestNote: string;
 }
 
+export type StaffRole = 'vice_principal' | 'teacher' | 'supervisor' | 'admin_staff';
+
+export const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
+  vice_principal: 'معاون',
+  teacher: 'مدرس',
+  supervisor: 'مشرف',
+  admin_staff: 'إداري',
+};
+
+export interface StaffMember {
+  id: string; // normalized lowercase email
+  schoolId: string;
+  ownerId: string;
+  email: string;
+  displayName: string;
+  role: StaffRole;
+  addedByUid: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
 export interface School {
   id: string;
   ownerId: string;
@@ -122,6 +143,8 @@ export interface School {
   stageNames?: StageNamesMap;
   stageTokens?: StageTokensMap;
   subjects?: string[];
+  adminPinHash?: string;
+  adminPinSalt?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import {
   AlertTriangle,
   ArrowRight,
@@ -10,9 +10,11 @@ import {
   ClipboardCheck,
   ExternalLink,
   Megaphone,
+  QrCode,
   Volume2,
   VolumeX,
 } from 'lucide-react';
+import { clearLockedStageToken } from '../lib/adminSecurity';
 import { db } from '../lib/firebase';
 import {
   showSystemNotificationViaSW,
@@ -23,6 +25,7 @@ import {
   StageBroadcastItem,
   StageBroadcastKind,
   StagePortal,
+  StudentPass,
 } from '../types/wisaal';
 import { ExternalPushBanner } from './ExternalPushBanner';
 import { MediaAttachmentPreview } from './MediaAttachmentPreview';
@@ -31,6 +34,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 interface StagePortalViewProps {
   stageToken?: string;
   demoPortal?: StagePortal;
+  lockedToStage?: boolean;
   onExit: () => void;
   onOpenStudentPass: (passToken: string) => void;
   onNotify: (kind: 'success' | 'error', message: string) => void;
@@ -90,9 +94,30 @@ function getKindMeta(kind: StageBroadcastKind): {
   }
 }
 
+function extractPassTokenInput(rawInput: string): string | null {
+  const trimmed = rawInput.trim();
+  if (!trimmed) return null;
+  try {
+    if (trimmed.includes('://') || trimmed.includes('?pass=')) {
+      const url = trimmed.includes('://')
+        ? new URL(trimmed)
+        : new URL(
+            trimmed.startsWith('?') ? `https://w.local/${trimmed}` : `https://w.local/?${trimmed}`
+          );
+      const fromQuery = url.searchParams.get('pass')?.trim() || '';
+      if (/^[a-zA-Z0-9_\-]{16,64}$/.test(fromQuery)) return fromQuery;
+    }
+  } catch {
+    // Fall back to raw token check
+  }
+  if (/^[a-zA-Z0-9_\-]{16,64}$/.test(trimmed)) return trimmed;
+  return null;
+}
+
 export function StagePortalView({
   stageToken,
   demoPortal,
+  lockedToStage = false,
   onExit,
   onOpenStudentPass,
   onNotify,
@@ -105,6 +130,9 @@ export function StagePortalView({
   const [lastReadId, setLastReadId] = useState<string>('');
   const [freshBroadcast, setFreshBroadcast] = useState<StageBroadcastItem | null>(null);
   const [savedChildPass, setSavedChildPass] = useState<SavedChildPass | null>(null);
+  const [showPassLookup, setShowPassLookup] = useState<boolean>(false);
+  const [passInput, setPassInput] = useState<string>('');
+  const [checkingPass, setCheckingPass] = useState<boolean>(false);
 
   const lastSeenBroadcastIdRef = useRef<string | null>(null);
   const storageKeyPrefix = stageToken || demoPortal?.stageToken || 'demo';
@@ -240,6 +268,37 @@ export function StagePortalView({
     onNotify('success', 'تم تأكيد الاطلاع.');
   };
 
+  const handleStagePassLookup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!portal) return;
+    const token = extractPassTokenInput(passInput);
+    if (!token) {
+      onNotify('error', 'أدخل رمز البطاقة الصحيح.');
+      return;
+    }
+
+    setCheckingPass(true);
+    try {
+      const snap = await getDoc(doc(db, 'passes', token));
+      if (!snap.exists()) {
+        onNotify('error', 'لم يتم العثور على بطاقة بهذا الرمز.');
+        return;
+      }
+      const data = snap.data() as Omit<StudentPass, 'passToken'>;
+      if (data.stageId && data.stageId !== portal.stageId) {
+        onNotify('error', `هذه البطاقة لا تنتمي إلى ${portal.stageName}.`);
+        return;
+      }
+      setPassInput('');
+      setShowPassLookup(false);
+      onOpenStudentPass(token);
+    } catch {
+      onNotify('error', 'تعذر التحقق من رمز البطاقة.');
+    } finally {
+      setCheckingPass(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#F7F8F7] py-10 px-4">
@@ -261,7 +320,10 @@ export function StagePortalView({
           <p className="text-sm text-slate-600 mb-6">تأكد من مسح رمز الباركود الصحيح.</p>
           <button
             type="button"
-            onClick={onExit}
+            onClick={() => {
+              clearLockedStageToken();
+              onExit();
+            }}
             className="inline-flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors"
           >
             <ArrowRight className="w-4 h-4" />
@@ -282,14 +344,16 @@ export function StagePortalView({
       <header className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-slate-200/80">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5 min-w-0">
-            <button
-              type="button"
-              onClick={onExit}
-              className="p-2 -mr-2 text-slate-600 hover:text-slate-900 rounded-lg transition-colors shrink-0"
-              aria-label="رجوع"
-            >
-              <ArrowRight className="w-5 h-5" />
-            </button>
+            {!lockedToStage && (
+              <button
+                type="button"
+                onClick={onExit}
+                className="p-2 -mr-2 text-slate-600 hover:text-slate-900 rounded-lg transition-colors shrink-0"
+                aria-label="رجوع"
+              >
+                <ArrowRight className="w-5 h-5" />
+              </button>
+            )}
             <div className="min-w-0">
               <p className="font-display font-bold text-slate-900 text-sm sm:text-base truncate">
                 {portal.stageName}
@@ -391,22 +455,74 @@ export function StagePortalView({
             )}
           </div>
 
-          {matchingSavedChild && (
-            <div className="pt-3.5 border-t border-slate-100 flex items-center justify-between gap-3">
-              <span className="text-xs text-slate-600 truncate">
-                <strong className="text-slate-900">{matchingSavedChild.studentDisplayName}</strong>{' '}
-                · {matchingSavedChild.className}
-              </span>
-              <button
-                type="button"
-                onClick={() => onOpenStudentPass(matchingSavedChild.passToken)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap shrink-0"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>بطاقة الطالب</span>
-              </button>
+          <div className="pt-3.5 border-t border-slate-100 space-y-2.5">
+            <div className="flex items-center justify-between gap-3">
+              {matchingSavedChild ? (
+                <>
+                  <span className="text-xs text-slate-600 truncate">
+                    <strong className="text-slate-900">
+                      {matchingSavedChild.studentDisplayName}
+                    </strong>{' '}
+                    · {matchingSavedChild.className}
+                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => onOpenStudentPass(matchingSavedChild.passToken)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>بطاقة الطالب</span>
+                    </button>
+                    {!demoPortal && (
+                      <button
+                        type="button"
+                        onClick={() => setShowPassLookup((v) => !v)}
+                        aria-label="بطاقة أخرى"
+                        className="p-1.5 text-slate-500 hover:text-slate-900 border border-slate-200 rounded-lg"
+                      >
+                        <QrCode className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span className="text-xs text-slate-500">الاستعلام عن بطاقة الطالب</span>
+                  {!demoPortal && (
+                    <button
+                      type="button"
+                      onClick={() => setShowPassLookup((v) => !v)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                    >
+                      <QrCode className="w-3.5 h-3.5" />
+                      <span>بطاقة الطالب</span>
+                    </button>
+                  )}
+                </>
+              )}
             </div>
-          )}
+
+            {showPassLookup && !demoPortal && (
+              <form onSubmit={handleStagePassLookup} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={passInput}
+                  onChange={(e) => setPassInput(e.target.value)}
+                  dir="ltr"
+                  placeholder="رمز بطاقة الطالب"
+                  className="flex-1 px-3 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700 text-right placeholder:text-right"
+                />
+                <button
+                  type="submit"
+                  disabled={checkingPass}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg whitespace-nowrap shrink-0"
+                >
+                  {checkingPass ? 'جاري...' : 'عرض'}
+                </button>
+              </form>
+            )}
+          </div>
         </section>
 
         <ExternalPushBanner

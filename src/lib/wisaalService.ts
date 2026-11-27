@@ -8,6 +8,12 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
+import {
+  hashAdminPin,
+  isValidAdminPinFormat,
+  isValidStaffEmail,
+  normalizeStaffEmail,
+} from './adminSecurity';
 import { isValidMediaDataUrl } from './imageCompression';
 import {
   dispatchExternalPushForStageBroadcast,
@@ -30,6 +36,8 @@ import {
   resolveClassroomStageId,
   sanitizeSchoolSubjects,
   School,
+  StaffMember,
+  StaffRole,
   STAGE_IDS,
   StageBroadcastItem,
   StageBroadcastKind,
@@ -871,6 +879,159 @@ export async function sendDirectStudentMessage(
     return { alert, mediaId: imageRef?.mediaId, externalPushSent: pushResult.sent };
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `passes/${student.passToken}`);
+  }
+}
+
+export type AdminAccessResolution =
+  | { status: 'owner'; schoolId: string }
+  | { status: 'owner_new'; schoolId: string }
+  | { status: 'staff'; schoolId: string; staffMember: StaffMember }
+  | { status: 'unauthorized' };
+
+export async function resolveAdminSchoolAccess(
+  uid: string,
+  email: string | null | undefined
+): Promise<AdminAccessResolution> {
+  const normalizedEmail = email ? normalizeStaffEmail(email) : '';
+
+  // 1. Check if this Google user is an explicitly added administration staff member
+  if (normalizedEmail && isValidStaffEmail(normalizedEmail)) {
+    try {
+      const staffSnap = await getDoc(doc(db, 'staffMembers', normalizedEmail));
+      if (staffSnap.exists()) {
+        const data = staffSnap.data() as Omit<StaffMember, 'id'>;
+        return {
+          status: 'staff',
+          schoolId: data.schoolId,
+          staffMember: { id: staffSnap.id, ...data },
+        };
+      }
+    } catch {
+      // Not a staff member or no access — continue checking ownership
+    }
+  }
+
+  // 2. Check if this user already owns a school document
+  try {
+    const ownSchoolSnap = await getDoc(doc(db, 'schools', uid));
+    if (ownSchoolSnap.exists()) {
+      return { status: 'owner', schoolId: uid };
+    }
+  } catch {
+    // Continue to check primary portal claim
+  }
+
+  // 3. If no primary school exists yet (or user is app admin), allow initial school creation
+  if (normalizedEmail === 'waadpc90@gmail.com') {
+    return { status: 'owner_new', schoolId: uid };
+  }
+
+  try {
+    const primarySnap = await getDoc(doc(db, 'publicPortals', 'primary'));
+    if (!primarySnap.exists()) {
+      return { status: 'owner_new', schoolId: uid };
+    }
+    const primaryData = primarySnap.data() as { ownerId?: string };
+    if (primaryData?.ownerId === uid) {
+      return { status: 'owner_new', schoolId: uid };
+    }
+  } catch {
+    // Default deny if directory check fails
+  }
+
+  return { status: 'unauthorized' };
+}
+
+export async function setSchoolAdminPin(schoolId: string, newPin: string): Promise<void> {
+  if (!isValidAdminPinFormat(newPin)) {
+    throw new Error('الرمز يجب أن يكون بين 4 و 16 خانة.');
+  }
+  const path = `schools/${schoolId}`;
+  const { hash, salt } = await hashAdminPin(newPin);
+  try {
+    await updateDoc(doc(db, 'schools', schoolId), {
+      adminPinHash: hash,
+      adminPinSalt: salt,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function addSchoolStaffMember(
+  schoolId: string,
+  addedByUid: string,
+  input: {
+    email: string;
+    displayName: string;
+    role: StaffRole;
+  }
+): Promise<StaffMember> {
+  const email = normalizeStaffEmail(input.email);
+  if (!isValidStaffEmail(email)) {
+    throw new Error('أدخل بريداً إلكترونياً صحيحاً.');
+  }
+  const displayName = sanitizeText(input.displayName, 80);
+  if (!displayName) {
+    throw new Error('أدخل اسم عضو الإدارة.');
+  }
+  const role: StaffRole = ['vice_principal', 'teacher', 'supervisor', 'admin_staff'].includes(
+    input.role
+  )
+    ? input.role
+    : 'admin_staff';
+
+  const path = `staffMembers/${email}`;
+  const ref = doc(db, 'staffMembers', email);
+  try {
+    const existingSnap = await getDoc(ref);
+    if (existingSnap.exists()) {
+      const existingData = existingSnap.data() as Omit<StaffMember, 'id'>;
+      if (existingData.ownerId !== schoolId) {
+        throw new Error('هذا البريد مرتبط بمدرسة أخرى.');
+      }
+      await updateDoc(ref, {
+        displayName,
+        role,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(ref, {
+        schoolId,
+        ownerId: schoolId,
+        email,
+        displayName,
+        role,
+        addedByUid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    return {
+      id: email,
+      schoolId,
+      ownerId: schoolId,
+      email,
+      displayName,
+      role,
+      addedByUid,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === 'هذا البريد مرتبط بمدرسة أخرى.') {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function removeSchoolStaffMember(memberEmail: string): Promise<void> {
+  const email = normalizeStaffEmail(memberEmail);
+  const path = `staffMembers/${email}`;
+  try {
+    await deleteDoc(doc(db, 'staffMembers', email));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
 

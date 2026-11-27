@@ -13,6 +13,8 @@
         "stageNames": { "type": "object", "description": "Display names for stage_1, stage_2, stage_3" },
         "stageTokens": { "type": "object", "description": "Unguessable QR capability tokens for stage_1, stage_2, stage_3" },
         "subjects": { "type": "array", "description": "Customizable list of school subjects (1 to 30 items, max 80 chars each)" },
+        "adminPinHash": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[a-f0-9]{64}$", "description": "PBKDF2-SHA256 hex hash of the admin dashboard lock code" },
+        "adminPinSalt": { "type": "string", "minLength": 32, "maxLength": 32, "pattern": "^[a-f0-9]{32}$", "description": "Random 16-byte hex salt for the admin dashboard lock code" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
@@ -216,6 +218,22 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["ownerId", "schoolId", "schoolName", "academicYear", "stageNames", "stageTokens", "createdAt", "updatedAt"]
+    },
+    "StaffMember": {
+      "title": "StaffMember",
+      "description": "Authorized school administration member granted access to a school workspace by the school owner.",
+      "type": "object",
+      "properties": {
+        "schoolId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "minLength": 5, "maxLength": 120, "pattern": "^[a-z0-9._%+\\-]+@[a-z0-9.\\-]+\\.[a-z]{2,}$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "role": { "type": "string", "enum": ["vice_principal", "teacher", "supervisor", "admin_staff"] },
+        "addedByUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["schoolId", "ownerId", "email", "displayName", "role", "addedByUid", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -270,6 +288,10 @@
     "/publicPortals/{portalId}": {
       "schema": { "$ref": "#/entities/PublicPortal" },
       "description": "PII-free public directory of school stage names and stage portal tokens for the Parents Portal."
+    },
+    "/staffMembers/{memberEmail}": {
+      "schema": { "$ref": "#/entities/StaffMember" },
+      "description": "Authorized administration members mapped by lowercase Google email to their assigned school."
     }
   }
 }

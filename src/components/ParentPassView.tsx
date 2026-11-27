@@ -24,6 +24,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 interface ParentPassViewProps {
   passToken?: string;
   demoPass?: StudentPass;
+  lockedToPass?: boolean;
   onExit?: () => void;
   onNotify: (kind: 'success' | 'error', message: string) => void;
 }
@@ -31,9 +32,11 @@ interface ParentPassViewProps {
 export function ParentPassView({
   passToken,
   demoPass,
+  lockedToPass = false,
   onExit,
   onNotify,
 }: ParentPassViewProps) {
+  const effectiveOnExit = lockedToPass ? undefined : onExit;
   const [passData, setPassData] = useState<StudentPass | null>(demoPass ?? null);
   const [loading, setLoading] = useState<boolean>(!demoPass);
   const [notFound, setNotFound] = useState<boolean>(false);
@@ -161,10 +164,10 @@ export function ParentPassView({
       <header className="no-print sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-slate-200/80">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5 min-w-0">
-            {onExit && (
+            {effectiveOnExit && (
               <button
                 type="button"
-                onClick={onExit}
+                onClick={effectiveOnExit}
                 className="p-2 -mr-2 text-slate-600 hover:text-slate-900 rounded-lg transition-colors shrink-0"
                 aria-label="رجوع"
               >
