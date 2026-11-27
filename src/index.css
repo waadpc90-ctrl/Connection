@@ -10,15 +10,38 @@
   html {
     font-family: var(--font-sans);
     scroll-behavior: smooth;
+    background-color: #f4f6f5;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: #f4f6f5;
+    color: #0f172a;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
   }
 
   h1, h2, h3, h4, .font-display {
     font-family: var(--font-display);
+    text-wrap: balance;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid #047857;
+    outline-offset: 2px;
   }
 }
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 @media print {

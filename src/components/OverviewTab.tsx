@@ -137,34 +137,34 @@ export function OverviewTab({
   return (
     <div className="space-y-6">
       {/* 4 KPI Metrics */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 bg-white border border-slate-200/80 rounded-xl divide-y lg:divide-y-0 lg:divide-x lg:divide-x-reverse divide-slate-200/80">
+      <div className="grid grid-cols-2 lg:grid-cols-4 bg-white border border-slate-200/80 rounded-2xl divide-y lg:divide-y-0 lg:divide-x lg:divide-x-reverse divide-slate-200/75 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
         <div className="p-5">
-          <p className="text-xs text-slate-500">الطلاب</p>
-          <p className="font-mono tabular-nums text-2xl font-bold text-slate-900 mt-1">
+          <p className="text-xs font-medium text-slate-500">الطلاب</p>
+          <p className="font-mono tabular-nums text-2xl sm:text-3xl font-bold text-slate-900 mt-1.5">
             {students.length}
           </p>
-          <p className="text-xs text-slate-400 mt-0.5 font-mono tabular-nums">
+          <p className="text-xs text-slate-400 mt-1 font-mono tabular-nums">
             {classrooms.length} شعب
           </p>
         </div>
 
         <div className="p-5">
-          <p className="text-xs text-slate-500">غياب اليوم</p>
-          <p className="font-mono tabular-nums text-2xl font-bold text-rose-700 mt-1">
+          <p className="text-xs font-medium text-slate-500">غياب اليوم</p>
+          <p className="font-mono tabular-nums text-2xl sm:text-3xl font-bold text-rose-700 mt-1.5">
             {todayAbsent.length}
           </p>
         </div>
 
         <div className="p-5">
-          <p className="text-xs text-slate-500">المتأخرون</p>
-          <p className="font-mono tabular-nums text-2xl font-bold text-amber-700 mt-1">
+          <p className="text-xs font-medium text-slate-500">المتأخرون</p>
+          <p className="font-mono tabular-nums text-2xl sm:text-3xl font-bold text-amber-700 mt-1.5">
             {todayLate.length}
           </p>
         </div>
 
         <div className="p-5">
-          <p className="text-xs text-slate-500">الدرجات</p>
-          <p className="font-mono tabular-nums text-2xl font-bold text-slate-900 mt-1">
+          <p className="text-xs font-medium text-slate-500">الدرجات</p>
+          <p className="font-mono tabular-nums text-2xl sm:text-3xl font-bold text-emerald-800 mt-1.5">
             {gradeEntries.length}
           </p>
         </div>
@@ -175,43 +175,64 @@ export function OverviewTab({
         <button
           type="button"
           onClick={() => onNavigate('attendance')}
-          className="bg-white border border-slate-200/80 hover:border-emerald-600/50 rounded-xl p-4 flex items-center justify-between gap-3 text-right transition-colors"
+          className="group bg-white border border-slate-200/80 hover:border-emerald-700/40 hover:shadow-[0_6px_18px_rgba(6,95,70,0.06)] rounded-2xl p-4 flex items-center justify-between gap-3 text-right transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0"
         >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 group-hover:bg-emerald-700 text-emerald-700 group-hover:text-white flex items-center justify-center shrink-0 transition-colors duration-200">
               <ClipboardCheck className="w-4 h-4" />
             </div>
-            <span className="font-display text-sm font-bold text-slate-900">رصد الغياب</span>
+            <div className="min-w-0">
+              <span className="block font-display text-sm font-bold text-slate-900">
+                رصد الغياب
+              </span>
+              <span className="block text-[11px] text-slate-500 truncate">
+                تسجيل الحضور اليومي
+              </span>
+            </div>
           </div>
-          <ArrowLeft className="w-4 h-4 text-slate-400" />
+          <ArrowLeft className="w-4 h-4 text-slate-400 group-hover:text-emerald-700 group-hover:-translate-x-1 transition-all duration-200 shrink-0" />
         </button>
 
         <button
           type="button"
           onClick={() => onNavigate('grades')}
-          className="bg-white border border-slate-200/80 hover:border-emerald-600/50 rounded-xl p-4 flex items-center justify-between gap-3 text-right transition-colors"
+          className="group bg-white border border-slate-200/80 hover:border-emerald-700/40 hover:shadow-[0_6px_18px_rgba(6,95,70,0.06)] rounded-2xl p-4 flex items-center justify-between gap-3 text-right transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0"
         >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 group-hover:bg-emerald-700 text-emerald-700 group-hover:text-white flex items-center justify-center shrink-0 transition-colors duration-200">
               <Camera className="w-4 h-4" />
             </div>
-            <span className="font-display text-sm font-bold text-slate-900">رفع الدرجات</span>
+            <div className="min-w-0">
+              <span className="block font-display text-sm font-bold text-slate-900">
+                رفع الدرجات
+              </span>
+              <span className="block text-[11px] text-slate-500 truncate">
+                من صورة أو إدخال مباشر
+              </span>
+            </div>
           </div>
-          <ArrowLeft className="w-4 h-4 text-slate-400" />
+          <ArrowLeft className="w-4 h-4 text-slate-400 group-hover:text-emerald-700 group-hover:-translate-x-1 transition-all duration-200 shrink-0" />
         </button>
 
         <button
           type="button"
           onClick={() => onNavigate('stage-broadcasts')}
-          className="bg-white border border-slate-200/80 hover:border-emerald-600/50 rounded-xl p-4 flex items-center justify-between gap-3 text-right transition-colors"
+          className="group bg-white border border-slate-200/80 hover:border-emerald-700/40 hover:shadow-[0_6px_18px_rgba(6,95,70,0.06)] rounded-2xl p-4 flex items-center justify-between gap-3 text-right transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0"
         >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 group-hover:bg-emerald-700 text-emerald-700 group-hover:text-white flex items-center justify-center shrink-0 transition-colors duration-200">
               <Megaphone className="w-4 h-4" />
             </div>
-            <span className="font-display text-sm font-bold text-slate-900">إرسال إشعار</span>
+            <div className="min-w-0">
+              <span className="block font-display text-sm font-bold text-slate-900">
+                إرسال إشعار
+              </span>
+              <span className="block text-[11px] text-slate-500 truncate">
+                تبليغ فوري للأولياء
+              </span>
+            </div>
           </div>
-          <ArrowLeft className="w-4 h-4 text-slate-400" />
+          <ArrowLeft className="w-4 h-4 text-slate-400 group-hover:text-emerald-700 group-hover:-translate-x-1 transition-all duration-200 shrink-0" />
         </button>
       </div>
 

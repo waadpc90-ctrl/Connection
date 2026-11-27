@@ -7,6 +7,7 @@ import {
   signOut,
   User,
 } from 'firebase/auth';
+import { AnimatePresence, motion, MotionConfig } from 'motion/react';
 import { auth, googleProvider } from './lib/firebase';
 import {
   clearLockedStageToken,
@@ -427,12 +428,47 @@ export default function App() {
     );
   };
 
+  const activeViewKey = activePassToken
+    ? `pass_${activePassToken}`
+    : urlStageToken
+      ? `url_stage_${urlStageToken}`
+      : urlPassToken
+        ? `url_pass_${urlPassToken}`
+        : previewDemoStage
+          ? `demo_stage_${previewDemoStage.stageId}`
+          : previewDemoPass
+            ? 'demo_pass'
+            : activeStageToken
+              ? `stage_${activeStageToken}`
+              : appMode === 'parents'
+                ? lockedStageToken
+                  ? `locked_stage_${lockedStageToken}`
+                  : 'parents_home'
+                : !authReady
+                  ? 'admin_loading'
+                  : user
+                    ? `admin_dashboard_${user.uid}`
+                    : 'admin_login';
+
   return (
-    <ErrorBoundary>
-      {renderContent()}
-      <FirstVisitInstallGuide onNotify={notify} />
-      <Toast toast={toast} onDismiss={() => setToast(null)} />
-      <OfflineIndicator />
-    </ErrorBoundary>
+    <MotionConfig reducedMotion="user">
+      <ErrorBoundary>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={activeViewKey}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="min-h-screen"
+          >
+            {renderContent()}
+          </motion.div>
+        </AnimatePresence>
+        <FirstVisitInstallGuide onNotify={notify} />
+        <Toast toast={toast} onDismiss={() => setToast(null)} />
+        <OfflineIndicator />
+      </ErrorBoundary>
+    </MotionConfig>
   );
 }
