@@ -10,7 +10,10 @@ import {
   Trash2,
 } from 'lucide-react';
 import { auth } from '../lib/firebase';
-import { buildApiUrl } from '../lib/pushNotifications';
+import {
+  extractAttendanceLocallyFromImage,
+  postJsonApiOrFallback,
+} from '../lib/clientOcrFallback';
 import { AttendanceStatus, ExtractedAttendanceRow, Student } from '../types/wisaal';
 
 interface AttendanceImageUploadPanelProps {
@@ -114,13 +117,15 @@ export function AttendanceImageUploadPanel({
         throw new Error('يرجى تسجيل الدخول أولاً.');
       }
 
-      const resp = await fetch(buildApiUrl('/api/extract-attendance'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
+      type ExtractAttendanceResp = {
+        detectedDate?: string;
+        rows?: ExtractedAttendanceRow[];
+      };
+
+      const attempt = await postJsonApiOrFallback<ExtractAttendanceResp>(
+        '/api/extract-attendance',
+        idToken,
+        {
           imageBase64: base64,
           mimeType,
           sectionStudents: sectionStudents.map((s) => ({
@@ -128,22 +133,28 @@ export function AttendanceImageUploadPanel({
             fullName: s.fullName,
             studentCode: s.studentCode,
           })),
-        }),
-      });
+        }
+      );
 
-      const data = (await resp.json()) as {
-        error?: string;
-        detectedDate?: string;
-        rows?: ExtractedAttendanceRow[];
-      };
+      let extractedRows: ExtractedAttendanceRow[] = [];
+      let foundDate = '';
 
-      if (!resp.ok) {
-        throw new Error(data.error || 'تعذر قراءة الصورة.');
+      if (attempt.kind === 'ok') {
+        extractedRows = Array.isArray(attempt.data.rows) ? attempt.data.rows : [];
+        foundDate = attempt.data.detectedDate || '';
+      } else if (attempt.kind === 'api_error') {
+        throw new Error(attempt.message);
+      } else {
+        const localRes = await extractAttendanceLocallyFromImage(
+          compressedPreview,
+          sectionStudents
+        );
+        extractedRows = localRes.rows;
+        foundDate = localRes.detectedDate;
       }
 
-      const extractedRows = Array.isArray(data.rows) ? data.rows : [];
       setRows(extractedRows);
-      setDetectedDate(data.detectedDate || '');
+      setDetectedDate(foundDate);
 
       if (extractedRows.length === 0) {
         setErrorMsg('لم تظهر أسماء واضحة في الصورة.');

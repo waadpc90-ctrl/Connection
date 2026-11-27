@@ -9,7 +9,10 @@ import {
   Trash2,
 } from 'lucide-react';
 import { auth } from '../lib/firebase';
-import { buildApiUrl } from '../lib/pushNotifications';
+import {
+  extractGradesLocallyFromImage,
+  postJsonApiOrFallback,
+} from '../lib/clientOcrFallback';
 import { ExtractedGradeRow, Student } from '../types/wisaal';
 
 interface GradeImageUploadPanelProps {
@@ -108,13 +111,16 @@ export function GradeImageUploadPanel({
         throw new Error('يرجى تسجيل الدخول أولاً.');
       }
 
-      const resp = await fetch(buildApiUrl('/api/extract-grades'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
+      type ExtractGradesResp = {
+        detectedSubject?: string;
+        detectedMaxScore?: number;
+        rows?: ExtractedGradeRow[];
+      };
+
+      const attempt = await postJsonApiOrFallback<ExtractGradesResp>(
+        '/api/extract-grades',
+        idToken,
+        {
           imageBase64: base64,
           mimeType,
           subject,
@@ -124,25 +130,34 @@ export function GradeImageUploadPanel({
             fullName: s.fullName,
             studentCode: s.studentCode,
           })),
-        }),
-      });
+        }
+      );
 
-      const data = (await resp.json()) as {
-        error?: string;
-        detectedSubject?: string;
-        detectedMaxScore?: number;
-        rows?: ExtractedGradeRow[];
-      };
+      let extractedRows: ExtractedGradeRow[] = [];
+      let detectedSubject = '';
+      let detectedMaxScore = 0;
 
-      if (!resp.ok) {
-        throw new Error(data.error || 'تعذر قراءة الصورة.');
+      if (attempt.kind === 'ok') {
+        extractedRows = Array.isArray(attempt.data.rows) ? attempt.data.rows : [];
+        detectedSubject = attempt.data.detectedSubject || '';
+        detectedMaxScore = attempt.data.detectedMaxScore || 0;
+      } else if (attempt.kind === 'api_error') {
+        throw new Error(attempt.message);
+      } else {
+        const localRes = await extractGradesLocallyFromImage(
+          compressedPreview,
+          sectionStudents,
+          maxScore
+        );
+        extractedRows = localRes.rows;
+        detectedSubject = localRes.detectedSubject;
+        detectedMaxScore = localRes.detectedMaxScore;
       }
 
-      const extractedRows = Array.isArray(data.rows) ? data.rows : [];
       setRows(extractedRows);
       setDetectedMeta({
-        subject: data.detectedSubject || '',
-        maxScore: data.detectedMaxScore || 0,
+        subject: detectedSubject,
+        maxScore: detectedMaxScore,
       });
 
       if (extractedRows.length === 0) {

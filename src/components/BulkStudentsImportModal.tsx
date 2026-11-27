@@ -12,7 +12,12 @@ import {
   X,
 } from 'lucide-react';
 import { auth } from '../lib/firebase';
-import { buildApiUrl } from '../lib/pushNotifications';
+import {
+  extractStudentsLocallyFromImage,
+  normalizeArabicForMatch,
+  parseStudentsFromText,
+  postJsonApiOrFallback,
+} from '../lib/clientOcrFallback';
 import { bulkCreateStudentsWithPasses } from '../lib/wisaalService';
 import { Classroom, School, Student } from '../types/wisaal';
 
@@ -38,155 +43,8 @@ interface DraftStudentRow {
 
 type ImportMode = 'paste' | 'image';
 
-const HEADER_WORDS = new Set([
-  'الاسم',
-  'اسم الطالب',
-  'الاسم الثلاثي',
-  'الاسم الرباعي',
-  'الاسم الكامل',
-  'الاسماء',
-  'الأسماء',
-  'التسلسل',
-  'ت',
-  'م',
-  'الرمز',
-  'الهاتف',
-  'الجوال',
-  'رقم الهاتف',
-  'ولي الامر',
-  'ولي الأمر',
-  'name',
-  'student',
-  'student name',
-  'phone',
-]);
-
-function normalizeArabicDigits(input: string): string {
-  return input
-    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
-    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
-}
-
 function normalizeNameForCompare(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[أإآ]/g, 'ا')
-    .replace(/ة/g, 'ه')
-    .replace(/ى/g, 'ي')
-    .replace(/\s+/g, ' ');
-}
-
-function looksLikePhone(val: string): boolean {
-  const digits = val.replace(/\D/g, '');
-  return digits.length >= 7 && digits.length <= 15 && /^[0-9+\-\s()]+$/.test(val.trim());
-}
-
-function looksLikeCode(val: string): boolean {
-  const trimmed = val.trim();
-  return (
-    trimmed.length >= 2 &&
-    trimmed.length <= 24 &&
-    /^[a-zA-Z0-9_\-/]+$/.test(trimmed) &&
-    !looksLikePhone(trimmed)
-  );
-}
-
-function parsePastedStudentsText(rawText: string): Array<{
-  fullName: string;
-  studentCode: string;
-  parentName: string;
-  parentPhone: string;
-}> {
-  const normalized = normalizeArabicDigits(rawText);
-  const lines = normalized
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  const results: Array<{
-    fullName: string;
-    studentCode: string;
-    parentName: string;
-    parentPhone: string;
-  }> = [];
-
-  for (const rawLine of lines) {
-    // Strip leading bullets or row numbering like "1-", "1.", "1)", "(1)", "•", "-"
-    const line = rawLine
-      .replace(/^[\s•●▪◦*–—-]+/, '')
-      .replace(/^\(?\d{1,3}\)?[\s.)\-–—:،,]+/, '')
-      .trim();
-
-    if (!line) continue;
-
-    // Split by tab, pipe, semicolon, or Arabic/English comma when present
-    let parts: string[] = [];
-    if (line.includes('\t')) {
-      parts = line.split('\t').map((p) => p.trim()).filter(Boolean);
-    } else if (line.includes('|')) {
-      parts = line.split('|').map((p) => p.trim()).filter(Boolean);
-    } else if (line.includes(';') || line.includes('؛')) {
-      parts = line.split(/[;؛]/).map((p) => p.trim()).filter(Boolean);
-    } else if (line.includes(',') || line.includes('،')) {
-      parts = line.split(/[,،]/).map((p) => p.trim()).filter(Boolean);
-    } else {
-      parts = [line];
-    }
-
-    // If first column is purely a serial number (e.g. from copied Excel table: "1 \t أحمد علي"), drop it
-    if (parts.length > 1 && /^\d{1,3}$/.test(parts[0])) {
-      parts = parts.slice(1);
-    }
-
-    if (parts.length === 0) continue;
-
-    let fullName = '';
-    let studentCode = '';
-    let parentName = '';
-    let parentPhone = '';
-
-    if (parts.length === 1) {
-      let single = parts[0];
-      // Extract trailing phone number if pasted inline (e.g., "أحمد علي حسن 07701234567")
-      const phoneMatch = single.match(/(\+?\d[\d\s\-]{6,16}\d)\s*$/);
-      if (phoneMatch) {
-        const candidatePhone = phoneMatch[1].replace(/[^0-9+\-\s]/g, '').trim();
-        if (candidatePhone.replace(/\D/g, '').length >= 7) {
-          parentPhone = candidatePhone.slice(0, 24);
-          single = single.slice(0, phoneMatch.index).replace(/[-–—:]\s*$/, '').trim();
-        }
-      }
-      fullName = single;
-    } else {
-      fullName = parts[0];
-      for (let i = 1; i < parts.length; i += 1) {
-        const cell = parts[i];
-        if (!parentPhone && looksLikePhone(cell)) {
-          parentPhone = cell.replace(/[^0-9+\-\s]/g, '').trim().slice(0, 24);
-        } else if (!studentCode && looksLikeCode(cell)) {
-          studentCode = cell.slice(0, 32);
-        } else if (!parentName && cell.length >= 2) {
-          parentName = cell.slice(0, 100);
-        }
-      }
-    }
-
-    fullName = fullName.replace(/\s+/g, ' ').trim().slice(0, 100);
-    if (fullName.length < 2) continue;
-    if (HEADER_WORDS.has(fullName.toLowerCase())) continue;
-
-    results.push({
-      fullName,
-      studentCode,
-      parentName,
-      parentPhone,
-    });
-
-    if (results.length >= 200) break;
-  }
-
-  return results;
+  return normalizeArabicForMatch(name);
 }
 
 async function compressRosterImageToBase64(
@@ -248,6 +106,7 @@ export function BulkStudentsImportModal({
   const [pasteText, setPasteText] = useState<string>('');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [extracting, setExtracting] = useState<boolean>(false);
+  const [ocrProgress, setOcrProgress] = useState<number | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [draftRows, setDraftRows] = useState<DraftStudentRow[]>([]);
@@ -292,7 +151,7 @@ export function BulkStudentsImportModal({
 
   const handleParseText = () => {
     setErrorMsg(null);
-    const parsed = parsePastedStudentsText(pasteText);
+    const parsed = parseStudentsFromText(pasteText, false);
     if (parsed.length === 0) {
       setErrorMsg('لم يتم العثور على أسماء صالحة في النص الملصوق.');
       return;
@@ -308,6 +167,7 @@ export function BulkStudentsImportModal({
     }
 
     setErrorMsg(null);
+    setOcrProgress(null);
     setExtracting(true);
     try {
       const { base64, mimeType, previewUrl: compressed } = await compressRosterImageToBase64(file);
@@ -318,20 +178,7 @@ export function BulkStudentsImportModal({
         throw new Error('يرجى تسجيل الدخول أولاً.');
       }
 
-      const resp = await fetch(buildApiUrl('/api/extract-students'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          imageBase64: base64,
-          mimeType,
-        }),
-      });
-
-      const data = (await resp.json()) as {
-        error?: string;
+      type ExtractStudentsResp = {
         rows?: Array<{
           fullName: string;
           studentCode: string;
@@ -340,13 +187,33 @@ export function BulkStudentsImportModal({
         }>;
       };
 
-      if (!resp.ok) {
-        throw new Error(data.error || 'تعذر قراءة الصورة.');
+      const attempt = await postJsonApiOrFallback<ExtractStudentsResp>(
+        '/api/extract-students',
+        idToken,
+        { imageBase64: base64, mimeType }
+      );
+
+      let extracted: Array<{
+        fullName: string;
+        studentCode: string;
+        parentName: string;
+        parentPhone: string;
+      }> = [];
+
+      if (attempt.kind === 'ok') {
+        extracted = Array.isArray(attempt.data.rows) ? attempt.data.rows : [];
+      } else if (attempt.kind === 'api_error') {
+        throw new Error(attempt.message);
+      } else {
+        // Static hosting (e.g. GitHub Pages PWA): run on-device Arabic OCR directly in browser
+        setOcrProgress(5);
+        extracted = await extractStudentsLocallyFromImage(compressed, (pct) => {
+          setOcrProgress(pct);
+        });
       }
 
-      const extracted = Array.isArray(data.rows) ? data.rows : [];
       if (extracted.length === 0) {
-        setErrorMsg('لم تظهر أسماء طلاب واضحة في الصورة.');
+        setErrorMsg('لم تظهر أسماء طلاب واضحة في الصورة. جرّب صورة أقرب وأوضح أو استخدم النسخ واللصق.');
       } else {
         populateDraftRows(extracted);
         onNotify('success', `تم استخراج ${extracted.length} اسماً من الصورة.`);
@@ -357,6 +224,7 @@ export function BulkStudentsImportModal({
       onNotify('error', msg);
     } finally {
       setExtracting(false);
+      setOcrProgress(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
       if (cameraInputRef.current) cameraInputRef.current.value = '';
     }
@@ -597,7 +465,13 @@ export function BulkStudentsImportModal({
                     ) : (
                       <ImagePlus className="w-3.5 h-3.5" />
                     )}
-                    <span>{extracting ? 'جاري القراءة...' : 'اختيار صورة'}</span>
+                    <span>
+                      {extracting
+                        ? ocrProgress !== null
+                          ? `جاري القراءة ${ocrProgress}%`
+                          : 'جاري القراءة...'
+                        : 'اختيار صورة'}
+                    </span>
                   </button>
                 </div>
               </div>
