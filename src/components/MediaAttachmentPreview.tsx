@@ -16,6 +16,14 @@ interface MediaAttachmentPreviewProps {
 
 const mediaCache = new Map<string, { dataUrl: string; caption: string }>();
 
+export function evictMediaFromCache(
+  scope: 'stage' | 'pass',
+  scopeToken: string,
+  mediaId: string
+): void {
+  mediaCache.delete(`${scope}:${scopeToken}:${mediaId}`);
+}
+
 export function MediaAttachmentPreview({
   scope,
   scopeToken,

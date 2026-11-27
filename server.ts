@@ -84,6 +84,7 @@ const SAFE_RELATIVE_URL_REGEX = /^\/(\?(stage|pass)=[a-zA-Z0-9_\-]+)?$/;
 interface FirebaseAppletConfig {
   apiKey?: string;
   projectId?: string;
+  firestoreDatabaseId?: string;
 }
 
 function loadFirebaseConfig(): FirebaseAppletConfig {
@@ -96,8 +97,11 @@ function loadFirebaseConfig(): FirebaseAppletConfig {
 }
 
 const firebaseCfg = loadFirebaseConfig();
+const PRIMARY_ADMIN_EMAIL = 'waadpc90@gmail.com';
 
-async function verifyFirebaseBearerToken(req: Request): Promise<{ uid: string; email: string } | null> {
+async function verifyFirebaseBearerToken(
+  req: Request
+): Promise<{ uid: string; email: string; idToken: string } | null> {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) return null;
   const idToken = header.slice('Bearer '.length).trim();
@@ -121,10 +125,70 @@ async function verifyFirebaseBearerToken(req: Request): Promise<{ uid: string; e
     };
     const user = data.users?.[0];
     if (!user?.localId || !user.emailVerified) return null;
-    return { uid: user.localId, email: user.email || '' };
+    return { uid: user.localId, email: (user.email || '').trim().toLowerCase(), idToken };
   } catch {
     return null;
   }
+}
+
+async function firestoreDocExistsWithUserToken(
+  docPath: string,
+  idToken: string
+): Promise<boolean> {
+  const projectId = firebaseCfg.projectId;
+  const databaseId = firebaseCfg.firestoreDatabaseId || '(default)';
+  if (!projectId) return false;
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/${encodeURIComponent(databaseId)}/documents/${docPath}`;
+    const resp = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function verifyAuthorizedSchoolAdmin(
+  req: Request
+): Promise<{ ok: true; uid: string; email: string } | { ok: false; status: 401 | 403; error: string }> {
+  const caller = await verifyFirebaseBearerToken(req);
+  if (!caller) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'يرجى تسجيل الدخول بحساب إدارة موثق أولاً.',
+    };
+  }
+
+  if (caller.email === PRIMARY_ADMIN_EMAIL) {
+    return { ok: true, uid: caller.uid, email: caller.email };
+  }
+
+  const checks: Array<Promise<boolean>> = [
+    firestoreDocExistsWithUserToken(`schools/${encodeURIComponent(caller.uid)}`, caller.idToken),
+    firestoreDocExistsWithUserToken(`admins/${encodeURIComponent(caller.uid)}`, caller.idToken),
+  ];
+  if (caller.email) {
+    checks.push(
+      firestoreDocExistsWithUserToken(
+        `staffMembers/${encodeURIComponent(caller.email)}`,
+        caller.idToken
+      )
+    );
+  }
+
+  const results = await Promise.all(checks);
+  if (results.some(Boolean)) {
+    return { ok: true, uid: caller.uid, email: caller.email };
+  }
+
+  return {
+    ok: false,
+    status: 403,
+    error: 'هذا الحساب غير مصرح له باستخدام خدمات الإدارة.',
+  };
 }
 
 interface SectionStudentInput {
@@ -185,10 +249,10 @@ async function startServer() {
   });
 
   app.post('/api/extract-grades', async (req: Request, res: Response) => {
-    // 1. Verify authenticated Firebase user
-    const caller = await verifyFirebaseBearerToken(req);
-    if (!caller) {
-      res.status(401).json({ error: 'يرجى تسجيل الدخول بحساب إدارة موثق قبل تحليل صور الكشوف.' });
+    // 1. Verify authenticated AND authorized school admin/staff
+    const authResult = await verifyAuthorizedSchoolAdmin(req);
+    if (!authResult.ok) {
+      res.status(authResult.status).json({ error: authResult.error });
       return;
     }
 
@@ -362,9 +426,9 @@ async function startServer() {
   });
 
   app.post('/api/extract-attendance', async (req: Request, res: Response) => {
-    const caller = await verifyFirebaseBearerToken(req);
-    if (!caller) {
-      res.status(401).json({ error: 'يرجى تسجيل الدخول بحساب إدارة موثق أولاً.' });
+    const authResult = await verifyAuthorizedSchoolAdmin(req);
+    if (!authResult.ok) {
+      res.status(authResult.status).json({ error: authResult.error });
       return;
     }
 
@@ -535,6 +599,139 @@ async function startServer() {
     }
   });
 
+  app.post('/api/extract-students', async (req: Request, res: Response) => {
+    const authResult = await verifyAuthorizedSchoolAdmin(req);
+    if (!authResult.ok) {
+      res.status(authResult.status).json({ error: authResult.error });
+      return;
+    }
+
+    const body = req.body as {
+      imageBase64?: unknown;
+      mimeType?: unknown;
+    };
+
+    if (
+      typeof body.imageBase64 !== 'string' ||
+      body.imageBase64.length < 32 ||
+      body.imageBase64.length > MAX_BASE64_LENGTH
+    ) {
+      res.status(400).json({ error: 'الصورة غير صالحة أو يتجاوز حجمها الحد المسموح.' });
+      return;
+    }
+
+    if (typeof body.mimeType !== 'string' || !ALLOWED_MIME_TYPES.has(body.mimeType)) {
+      res.status(400).json({ error: 'اختر صورة بصيغة JPG أو PNG أو WebP.' });
+      return;
+    }
+
+    const ai = getAiClient();
+    if (!ai) {
+      res.status(503).json({
+        error: 'خدمة تحليل الصور غير مفعّلة حالياً على الخادم.',
+      });
+      return;
+    }
+
+    try {
+      const promptText = [
+        'أنت خبير دقيق في قراءة قوائم وكشوف أسماء الطلاب المدرسية العربية (المطبوعة أو المكتوبة بخط اليد أو لقطات شاشة إكسل وواتساب).',
+        'استخرج جميع أسماء الطلاب الموجودة في الصورة بدقة وبالترتيب.',
+        'التعليمات الصارمة:',
+        '1. ضع اسم الطالب الكامل في fullName بدون أرقام التسلسل (مثل 1 أو ١- أو ت) وبدون عناوين الأعمدة مثل "الاسم" أو "التسلسل" أو "الملاحظات".',
+        '2. إذا وُجد رمز/رقم امتحاني أو رقم قيد واضح للطالب فضعه في studentCode، وإلا أعد "".',
+        '3. إذا وُجد عمود منفصل لاسم ولي الأمر فضعه في parentName، وإلا أعد "".',
+        '4. إذا وُجد رقم هاتف/جوال في نفس صف الطالب فضعه في parentPhone بالأرقام الإنجليزية القياسية (0-9)، وإلا أعد "".',
+        '5. حوّل جميع الأرقام العربية الشرقية (٠١٢٣٤٥٦٧٨٩) إلى أرقام قياسية (0-9).',
+        '6. تجاهل الترويسات والتواقيع والأختام وأسماء المعلمين أو المدرسة.',
+      ].join('\n');
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: body.mimeType,
+                data: body.imageBase64,
+              },
+            },
+            { text: promptText },
+          ],
+        },
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              rows: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    fullName: { type: Type.STRING },
+                    studentCode: { type: Type.STRING },
+                    parentName: { type: Type.STRING },
+                    parentPhone: { type: Type.STRING },
+                  },
+                  required: ['fullName', 'studentCode', 'parentName', 'parentPhone'],
+                },
+              },
+            },
+            required: ['rows'],
+          },
+        },
+      });
+
+      const rawText = (response.text ?? '{}').trim();
+      const parsed = JSON.parse(rawText) as { rows?: unknown[] };
+
+      const cleanRows = Array.isArray(parsed.rows)
+        ? parsed.rows
+            .slice(0, 150)
+            .map((item) => {
+              const r = (item ?? {}) as Record<string, unknown>;
+              const fullName =
+                typeof r.fullName === 'string'
+                  ? r.fullName.replace(/\s+/g, ' ').trim().slice(0, 100)
+                  : '';
+              const studentCode =
+                typeof r.studentCode === 'string'
+                  ? r.studentCode.replace(/\s+/g, ' ').trim().slice(0, 32)
+                  : '';
+              const parentName =
+                typeof r.parentName === 'string'
+                  ? r.parentName.replace(/\s+/g, ' ').trim().slice(0, 100)
+                  : '';
+              const parentPhone =
+                typeof r.parentPhone === 'string'
+                  ? r.parentPhone.replace(/[^0-9+\-\s]/g, '').trim().slice(0, 24)
+                  : '';
+              return { fullName, studentCode, parentName, parentPhone };
+            })
+            .filter((r) => r.fullName.length >= 2)
+        : [];
+
+      res.json({ rows: cleanRows });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('Extract students error:', errMsg);
+      if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+        res.status(429).json({
+          error: 'تم تجاوز حد الطلبات المؤقت. يرجى المحاولة بعد قليل.',
+        });
+        return;
+      }
+      if (errMsg.includes('403') || errMsg.includes('API_KEY_INVALID') || errMsg.includes('400')) {
+        res.status(400).json({
+          error: 'تعذر قراءة الصورة. تحقق من جودة الصورة أو إعدادات الخدمة.',
+        });
+        return;
+      }
+      res.status(500).json({ error: 'تعذر استخراج أسماء الطلاب من الصورة. حاول بصورة أوضح.' });
+    }
+  });
+
   // Public VAPID key for parent browsers to subscribe to external OS Web Push notifications
   app.get('/api/push/public-key', (_req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -546,9 +743,9 @@ async function startServer() {
 
   // Authenticated school-only Web Push external notification relay
   app.post('/api/push/send', async (req: Request, res: Response) => {
-    const caller = await verifyFirebaseBearerToken(req);
-    if (!caller) {
-      res.status(401).json({ error: 'يجب تسجيل الدخول بحساب مدرسة موثق لإرسال الإشعارات الخارجية.' });
+    const authResult = await verifyAuthorizedSchoolAdmin(req);
+    if (!authResult.ok) {
+      res.status(authResult.status).json({ error: authResult.error });
       return;
     }
 

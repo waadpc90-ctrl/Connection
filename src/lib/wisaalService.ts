@@ -1,5 +1,6 @@
 import {
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   serverTimestamp,
@@ -544,7 +545,8 @@ export async function syncStagePortalsMetadata(
   uid: string,
   school: School,
   classrooms: Classroom[],
-  students: Student[]
+  students: Student[],
+  syncPublicDirectory = true
 ): Promise<void> {
   const tokens = school.stageTokens || (await ensureSchoolDocument(uid, school));
   const stageNames = getSchoolStageNames(school);
@@ -581,7 +583,9 @@ export async function syncStagePortalsMetadata(
         });
       }
     }
-    await syncPublicPortalDirectory(uid, cleanName, cleanYear, stageNames, tokens);
+    if (syncPublicDirectory) {
+      await syncPublicPortalDirectory(uid, cleanName, cleanYear, stageNames, tokens);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, 'stagePortals');
   }
@@ -879,6 +883,211 @@ export async function sendDirectStudentMessage(
     return { alert, mediaId: imageRef?.mediaId, externalPushSent: pushResult.sent };
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `passes/${student.passToken}`);
+  }
+}
+
+function stripImageFromBroadcast(item: StageBroadcastItem): StageBroadcastItem {
+  const cleaned: StageBroadcastItem = {
+    id: item.id,
+    kind: item.kind,
+    title: item.title,
+    body: item.body,
+    targetClassId: item.targetClassId,
+    targetSectionName: item.targetSectionName,
+    createdAtIso: item.createdAtIso,
+  };
+  if (item.subject) {
+    cleaned.subject = item.subject;
+  }
+  return cleaned;
+}
+
+function stripImageFromPassAlert(alert: PassAlert): PassAlert {
+  return {
+    id: alert.id,
+    kind: alert.kind,
+    title: alert.title,
+    body: alert.body,
+    createdAtIso: alert.createdAtIso,
+  };
+}
+
+export async function deleteStageBroadcast(
+  stageToken: string,
+  broadcastId: string,
+  stageStudents: Student[]
+): Promise<{ deletedMediaId?: string }> {
+  const portalPath = `stagePortals/${stageToken}`;
+  const portalRef = doc(db, 'stagePortals', stageToken);
+
+  try {
+    const portalSnap = await getDoc(portalRef);
+    if (!portalSnap.exists()) {
+      return {};
+    }
+
+    const data = portalSnap.data() as {
+      broadcasts?: StageBroadcastItem[];
+      latestBroadcast?: StageBroadcastItem;
+    };
+    const existingBroadcasts = Array.isArray(data.broadcasts) ? data.broadcasts : [];
+    const target = existingBroadcasts.find((b) => b.id === broadcastId);
+    const nextBroadcasts = existingBroadcasts.filter((b) => b.id !== broadcastId);
+
+    await updateDoc(portalRef, {
+      broadcasts: nextBroadcasts,
+      latestBroadcast: nextBroadcasts.length > 0 ? nextBroadcasts[0] : deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+
+    const deletedMediaId = target?.imageMediaId;
+    if (deletedMediaId) {
+      await deleteDoc(doc(db, 'stagePortals', stageToken, 'media', deletedMediaId)).catch(
+        () => undefined
+      );
+    }
+
+    // Clean up matching latestAlert on targeted students' passes (non-blocking)
+    if (target && stageStudents.length > 0) {
+      const candidates =
+        target.targetClassId === 'all'
+          ? stageStudents
+          : stageStudents.filter((s) => s.classId === target.targetClassId);
+
+      await Promise.allSettled(
+        candidates.slice(0, 60).map(async (stu) => {
+          const passRef = doc(db, 'passes', stu.passToken);
+          const passSnap = await getDoc(passRef);
+          if (!passSnap.exists()) return;
+          const alert = (passSnap.data() as { latestAlert?: PassAlert }).latestAlert;
+          if (!alert) return;
+          const matchesMedia = Boolean(deletedMediaId && alert.imageMediaId === deletedMediaId);
+          const matchesText = alert.title === target.title && alert.body === target.body;
+          if (matchesMedia || matchesText) {
+            await updateDoc(passRef, {
+              latestAlert: deleteField(),
+              updatedAt: serverTimestamp(),
+            });
+          }
+        })
+      );
+    }
+
+    return { deletedMediaId };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, portalPath);
+  }
+}
+
+export async function removeStageBroadcastImage(
+  stageToken: string,
+  broadcastId: string,
+  stageStudents: Student[]
+): Promise<{ deletedMediaId?: string }> {
+  const portalPath = `stagePortals/${stageToken}`;
+  const portalRef = doc(db, 'stagePortals', stageToken);
+
+  try {
+    const portalSnap = await getDoc(portalRef);
+    if (!portalSnap.exists()) {
+      return {};
+    }
+
+    const data = portalSnap.data() as {
+      broadcasts?: StageBroadcastItem[];
+      latestBroadcast?: StageBroadcastItem;
+    };
+    const existingBroadcasts = Array.isArray(data.broadcasts) ? data.broadcasts : [];
+    const target = existingBroadcasts.find((b) => b.id === broadcastId);
+    const deletedMediaId = target?.imageMediaId;
+    if (!target || !deletedMediaId) {
+      return {};
+    }
+
+    const nextBroadcasts = existingBroadcasts.map((b) =>
+      b.id === broadcastId ? stripImageFromBroadcast(b) : b
+    );
+    const nextLatest =
+      data.latestBroadcast?.id === broadcastId
+        ? stripImageFromBroadcast(data.latestBroadcast)
+        : data.latestBroadcast;
+
+    await updateDoc(portalRef, {
+      broadcasts: nextBroadcasts,
+      ...(nextLatest ? { latestBroadcast: nextLatest } : {}),
+      updatedAt: serverTimestamp(),
+    });
+
+    await deleteDoc(doc(db, 'stagePortals', stageToken, 'media', deletedMediaId)).catch(
+      () => undefined
+    );
+
+    if (stageStudents.length > 0) {
+      const candidates =
+        target.targetClassId === 'all'
+          ? stageStudents
+          : stageStudents.filter((s) => s.classId === target.targetClassId);
+
+      await Promise.allSettled(
+        candidates.slice(0, 60).map(async (stu) => {
+          const passRef = doc(db, 'passes', stu.passToken);
+          const passSnap = await getDoc(passRef);
+          if (!passSnap.exists()) return;
+          const alert = (passSnap.data() as { latestAlert?: PassAlert }).latestAlert;
+          if (alert && alert.imageMediaId === deletedMediaId) {
+            await updateDoc(passRef, {
+              latestAlert: stripImageFromPassAlert(alert),
+              updatedAt: serverTimestamp(),
+            });
+          }
+        })
+      );
+    }
+
+    return { deletedMediaId };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, portalPath);
+  }
+}
+
+export async function deleteDirectStudentAlert(
+  passToken: string,
+  mediaId?: string
+): Promise<void> {
+  const path = `passes/${passToken}`;
+  try {
+    await updateDoc(doc(db, 'passes', passToken), {
+      latestAlert: deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+    if (mediaId) {
+      await deleteDoc(doc(db, 'passes', passToken, 'media', mediaId)).catch(() => undefined);
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function removeDirectStudentAlertImage(
+  passToken: string,
+  mediaId: string
+): Promise<void> {
+  const path = `passes/${passToken}`;
+  try {
+    const passRef = doc(db, 'passes', passToken);
+    const passSnap = await getDoc(passRef);
+    if (passSnap.exists()) {
+      const alert = (passSnap.data() as { latestAlert?: PassAlert }).latestAlert;
+      if (alert && alert.imageMediaId === mediaId) {
+        await updateDoc(passRef, {
+          latestAlert: stripImageFromPassAlert(alert),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
+    await deleteDoc(doc(db, 'passes', passToken, 'media', mediaId)).catch(() => undefined);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
 
@@ -1230,6 +1439,126 @@ export async function createStudentWithPass(
 
     await batch.commit();
     return { studentId, passToken };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function bulkCreateStudentsWithPasses(
+  uid: string,
+  school: School,
+  classroom: Classroom,
+  entries: Array<{
+    fullName: string;
+    studentCode?: string;
+    parentName?: string;
+    parentPhone?: string;
+  }>,
+  existingCodes: string[] = []
+): Promise<{ createdCount: number }> {
+  const path = `schools/${uid}/students`;
+  const stageId = resolveClassroomStageId(classroom);
+  const stageNames = getSchoolStageNames(school);
+  const cleanSchoolName = sanitizeText(school.name, FIELD_LIMITS.schoolName);
+  const cleanSchoolWhatsapp = sanitizePhone(school.whatsappNumber);
+  const cleanAcademicYear = sanitizeText(school.academicYear, FIELD_LIMITS.academicYear);
+  const cleanClassName = sanitizeText(classroom.name, FIELD_LIMITS.className);
+  const todayIso = getTodayIso();
+
+  const usedCodes = new Set(existingCodes.map((c) => c.trim().toLowerCase()).filter(Boolean));
+  let seqNum = Math.max(101, existingCodes.length + 101);
+
+  const nextUniqueCode = (): string => {
+    while (usedCodes.has(`st-${seqNum}`)) {
+      seqNum += 1;
+    }
+    const code = `ST-${seqNum}`;
+    usedCodes.add(code.toLowerCase());
+    seqNum += 1;
+    return code;
+  };
+
+  const validEntries = entries
+    .map((entry) => {
+      const fullName = sanitizeText(entry.fullName || '', FIELD_LIMITS.studentName);
+      if (!fullName) return null;
+      const rawCode = sanitizeText(entry.studentCode || '', FIELD_LIMITS.studentCode);
+      const studentCode = rawCode || nextUniqueCode();
+      usedCodes.add(studentCode.toLowerCase());
+      return {
+        fullName,
+        studentCode,
+        parentName: sanitizeText(entry.parentName || '', FIELD_LIMITS.parentName),
+        parentPhone: sanitizePhone(entry.parentPhone || ''),
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .slice(0, 200);
+
+  if (validEntries.length === 0) {
+    return { createdCount: 0 };
+  }
+
+  try {
+    // Each student writes 2 docs (student + pass), so chunk at 150 students = 300 ops (< 500 Firestore batch limit)
+    const CHUNK_SIZE = 150;
+    for (let i = 0; i < validEntries.length; i += CHUNK_SIZE) {
+      const chunk = validEntries.slice(i, i + CHUNK_SIZE);
+      const batch = writeBatch(db);
+
+      for (const item of chunk) {
+        const studentId = generateSafeId('stu');
+        const passToken = generatePassToken();
+
+        batch.set(doc(db, 'schools', uid, 'students', studentId), {
+          ownerId: uid,
+          schoolId: uid,
+          stageId,
+          classId: classroom.id,
+          className: cleanClassName,
+          fullName: item.fullName,
+          studentCode: item.studentCode,
+          parentName: item.parentName,
+          parentPhone: item.parentPhone,
+          passToken,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        batch.set(doc(db, 'passes', passToken), {
+          ownerId: uid,
+          schoolId: uid,
+          studentId,
+          stageId,
+          stageName: stageNames[stageId],
+          schoolName: cleanSchoolName,
+          schoolWhatsapp: cleanSchoolWhatsapp,
+          academicYear: cleanAcademicYear,
+          studentDisplayName: item.fullName,
+          studentCode: item.studentCode,
+          className: cleanClassName,
+          absenceAlertThreshold: school.absenceAlertThreshold,
+          todayDate: todayIso,
+          todayStatus: 'none',
+          totalAbsent: 0,
+          totalLate: 0,
+          totalExcused: 0,
+          averagePercent: 0,
+          subjectsCount: 0,
+          totalScoreSum: 0,
+          totalMaxScoreSum: 0,
+          subjectSummaries: [],
+          recentAttendance: [],
+          recentGrades: [],
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+    }
+
+    return { createdCount: validEntries.length };
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
   }

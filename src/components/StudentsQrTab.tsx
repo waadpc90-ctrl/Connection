@@ -12,6 +12,7 @@ import {
   QrCode,
   Search,
   Trash2,
+  Users,
   X,
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -25,6 +26,7 @@ import {
   updateStudentAndPass,
 } from '../lib/wisaalService';
 import { Classroom, ParentAcknowledgement, School, StageId, Student } from '../types/wisaal';
+import { BulkStudentsImportModal } from './BulkStudentsImportModal';
 
 interface StudentsQrTabProps {
   uid: string;
@@ -61,6 +63,7 @@ export function StudentsQrTab({
   }, [stageId]);
 
   const [showStudentModal, setShowStudentModal] = useState<boolean>(false);
+  const [showBulkModal, setShowBulkModal] = useState<boolean>(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [stuClassId, setStuClassId] = useState<string>('');
   const [stuFullName, setStuFullName] = useState<string>('');
@@ -304,6 +307,16 @@ export function StudentsQrTab({
             >
               <Plus className="w-3.5 h-3.5" />
               <span>شعبة</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowBulkModal(true)}
+              disabled={classrooms.length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 disabled:opacity-50 rounded-lg whitespace-nowrap"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>إضافة جماعية</span>
             </button>
 
             <button
@@ -744,6 +757,24 @@ export function StudentsQrTab({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal: Bulk Student Import (Paste or Image) */}
+      {showBulkModal && (
+        <BulkStudentsImportModal
+          uid={uid}
+          school={school}
+          classrooms={classrooms}
+          existingStudents={students}
+          initialClassId={filterClassId !== 'all' ? filterClassId : classrooms[0]?.id || ''}
+          onClose={() => setShowBulkModal(false)}
+          onImported={(classId, count) => {
+            setShowBulkModal(false);
+            setFilterClassId(classId);
+            onNotify('success', `تم إضافة ${count} طالباً بنجاح.`);
+          }}
+          onNotify={onNotify}
+        />
       )}
     </div>
   );

@@ -323,10 +323,10 @@ export function SchoolDashboard({
     lastPortalSyncSigRef.current = sig;
 
     const timer = window.setTimeout(() => {
-      syncStagePortalsMetadata(schoolId, school, classrooms, students).catch(() => {});
+      syncStagePortalsMetadata(schoolId, school, classrooms, students, isSchoolOwner).catch(() => {});
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [schoolId, school, classrooms, students, isPinUnlocked]);
+  }, [schoolId, school, classrooms, students, isPinUnlocked, isSchoolOwner]);
 
   const stageNames = useMemo(() => getSchoolStageNames(school), [school]);
   const activeStageName = stageNames[activeStageId];

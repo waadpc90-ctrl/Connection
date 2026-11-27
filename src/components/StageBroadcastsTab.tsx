@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Copy,
   ExternalLink,
+  ImageOff,
   ImagePlus,
   Megaphone,
   Printer,
@@ -20,6 +21,10 @@ import { db } from '../lib/firebase';
 import { compressImageToDataUrl } from '../lib/imageCompression';
 import {
   buildStagePortalUrl,
+  deleteDirectStudentAlert,
+  deleteStageBroadcast,
+  removeDirectStudentAlertImage,
+  removeStageBroadcastImage,
   sendDirectStudentMessage,
   sendStageCollectiveBroadcast,
 } from '../lib/wisaalService';
@@ -37,7 +42,7 @@ import {
   StagePortal,
   Student,
 } from '../types/wisaal';
-import { MediaAttachmentPreview } from './MediaAttachmentPreview';
+import { evictMediaFromCache, MediaAttachmentPreview } from './MediaAttachmentPreview';
 
 interface StageBroadcastsTabProps {
   uid: string;
@@ -109,6 +114,8 @@ export function StageBroadcastsTab({
   const [activePortal, setActivePortal] = useState<StagePortal | null>(null);
   const [stageExternalSubCount, setStageExternalSubCount] = useState<number>(0);
   const [recentPrivateMessages, setRecentPrivateMessages] = useState<RecentPrivateMessage[]>([]);
+  const [confirmActionKey, setConfirmActionKey] = useState<string | null>(null);
+  const [busyActionKey, setBusyActionKey] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -287,6 +294,89 @@ export function StageBroadcastsTab({
       onNotify('error', 'تعذر الإرسال.');
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleDeleteBroadcast = async (broadcastId: string) => {
+    if (!activeStageToken) return;
+    const key = `del-b:${broadcastId}`;
+    setBusyActionKey(key);
+    try {
+      const { deletedMediaId } = await deleteStageBroadcast(
+        activeStageToken,
+        broadcastId,
+        stageStudents
+      );
+      if (deletedMediaId) {
+        evictMediaFromCache('stage', activeStageToken, deletedMediaId);
+      }
+      setConfirmActionKey(null);
+      onNotify('success', 'تم حذف الإعمام.');
+    } catch {
+      onNotify('error', 'تعذر حذف الإعمام.');
+    } finally {
+      setBusyActionKey(null);
+    }
+  };
+
+  const handleRemoveBroadcastImage = async (broadcastId: string) => {
+    if (!activeStageToken) return;
+    const key = `img-b:${broadcastId}`;
+    setBusyActionKey(key);
+    try {
+      const { deletedMediaId } = await removeStageBroadcastImage(
+        activeStageToken,
+        broadcastId,
+        stageStudents
+      );
+      if (deletedMediaId) {
+        evictMediaFromCache('stage', activeStageToken, deletedMediaId);
+      }
+      setConfirmActionKey(null);
+      onNotify('success', 'تم حذف الصورة.');
+    } catch {
+      onNotify('error', 'تعذر حذف الصورة.');
+    } finally {
+      setBusyActionKey(null);
+    }
+  };
+
+  const handleDeletePrivateMessage = async (msg: RecentPrivateMessage) => {
+    const key = `del-p:${msg.id}`;
+    setBusyActionKey(key);
+    try {
+      await deleteDirectStudentAlert(msg.passToken, msg.mediaId);
+      if (msg.mediaId) {
+        evictMediaFromCache('pass', msg.passToken, msg.mediaId);
+      }
+      setRecentPrivateMessages((prev) => prev.filter((item) => item.id !== msg.id));
+      setConfirmActionKey(null);
+      onNotify('success', 'تم حذف الرسالة.');
+    } catch {
+      onNotify('error', 'تعذر حذف الرسالة.');
+    } finally {
+      setBusyActionKey(null);
+    }
+  };
+
+  const handleRemovePrivateImage = async (msg: RecentPrivateMessage) => {
+    if (!msg.mediaId) return;
+    const key = `img-p:${msg.id}`;
+    setBusyActionKey(key);
+    try {
+      await removeDirectStudentAlertImage(msg.passToken, msg.mediaId);
+      evictMediaFromCache('pass', msg.passToken, msg.mediaId);
+      setRecentPrivateMessages((prev) =>
+        prev.map((item) =>
+          item.id === msg.id ? { ...item, mediaId: undefined, imageCaption: undefined } : item
+        )
+      );
+      setConfirmActionKey(null);
+      onNotify('success', 'تم حذف الصورة.');
+    } catch {
+      onNotify('error', 'تعذر حذف الصورة.');
+    } finally {
+      setBusyActionKey(null);
     }
   };
 
@@ -516,33 +606,100 @@ export function StageBroadcastsTab({
             الرسائل الخاصة
           </h2>
           <div className="divide-y divide-slate-100">
-            {recentPrivateMessages.map((msg) => (
-              <div key={msg.id} className="py-3 first:pt-0 last:pb-0">
-                <div className="flex items-center justify-between gap-2 text-xs mb-1">
-                  <span className="inline-flex items-center gap-1 font-semibold text-emerald-800">
-                    <UserCheck className="w-3.5 h-3.5" />
-                    <span>{msg.studentName}</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onPreviewPass(msg.passToken)}
-                    className="text-emerald-800 hover:underline"
-                  >
-                    البطاقة
-                  </button>
+            {recentPrivateMessages.map((msg) => {
+              const delKey = `del-p:${msg.id}`;
+              const imgKey = `img-p:${msg.id}`;
+              return (
+                <div key={msg.id} className="py-3 first:pt-0 last:pb-0">
+                  <div className="flex items-center justify-between gap-2 text-xs mb-1">
+                    <span className="inline-flex items-center gap-1 font-semibold text-emerald-800">
+                      <UserCheck className="w-3.5 h-3.5" />
+                      <span>{msg.studentName}</span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onPreviewPass(msg.passToken)}
+                        className="text-emerald-800 hover:underline"
+                      >
+                        البطاقة
+                      </button>
+
+                      {msg.mediaId &&
+                        (confirmActionKey === imgKey ? (
+                          <span className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={busyActionKey === imgKey}
+                              onClick={() => handleRemovePrivateImage(msg)}
+                              className="px-2 py-0.5 text-[11px] font-semibold text-white bg-amber-600 rounded"
+                            >
+                              تأكيد حذف الصورة
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmActionKey(null)}
+                              className="px-1.5 py-0.5 text-[11px] text-slate-500"
+                            >
+                              إلغاء
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmActionKey(imgKey)}
+                            className="inline-flex items-center gap-1 text-[11px] text-amber-700 hover:text-amber-900"
+                            title="حذف الصورة فقط"
+                          >
+                            <ImageOff className="w-3.5 h-3.5" />
+                            <span>حذف الصورة</span>
+                          </button>
+                        ))}
+
+                      {confirmActionKey === delKey ? (
+                        <span className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={busyActionKey === delKey}
+                            onClick={() => handleDeletePrivateMessage(msg)}
+                            className="px-2 py-0.5 text-[11px] font-semibold text-white bg-rose-600 rounded"
+                          >
+                            تأكيد الحذف
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmActionKey(null)}
+                            className="px-1.5 py-0.5 text-[11px] text-slate-500"
+                          >
+                            إلغاء
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmActionKey(delKey)}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                          aria-label="حذف الرسالة"
+                          title="حذف الرسالة"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-sm font-semibold text-slate-900">{msg.title}</p>
+                  <p className="text-xs text-slate-600 mt-0.5">{msg.body}</p>
+                  {msg.mediaId && (
+                    <MediaAttachmentPreview
+                      scope="pass"
+                      scopeToken={msg.passToken}
+                      mediaId={msg.mediaId}
+                      caption={msg.imageCaption}
+                    />
+                  )}
                 </div>
-                <p className="text-sm font-semibold text-slate-900">{msg.title}</p>
-                <p className="text-xs text-slate-600 mt-0.5">{msg.body}</p>
-                {msg.mediaId && (
-                  <MediaAttachmentPreview
-                    scope="pass"
-                    scopeToken={msg.passToken}
-                    mediaId={msg.mediaId}
-                    caption={msg.imageCaption}
-                  />
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
@@ -649,16 +806,83 @@ export function StageBroadcastsTab({
                       ? 'text-amber-700'
                       : 'text-slate-600';
 
+              const delKey = `del-b:${item.id}`;
+              const imgKey = `img-b:${item.id}`;
+
               return (
                 <div key={item.id} className="py-3.5 first:pt-0 last:pb-0">
-                  <div className="flex items-center justify-between gap-2 text-xs mb-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs mb-1">
                     <span className={`inline-flex items-center gap-1 font-semibold ${toneClass}`}>
                       <Icon className="w-3.5 h-3.5" />
                       <span>{item.targetSectionName}</span>
                     </span>
-                    <span className="font-mono tabular-nums text-slate-400">
-                      {formatTime(item.createdAtIso)}
-                    </span>
+
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono tabular-nums text-slate-400">
+                        {formatTime(item.createdAtIso)}
+                      </span>
+
+                      {item.imageMediaId &&
+                        (confirmActionKey === imgKey ? (
+                          <span className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={busyActionKey === imgKey}
+                              onClick={() => handleRemoveBroadcastImage(item.id)}
+                              className="px-2 py-0.5 text-[11px] font-semibold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded"
+                            >
+                              {busyActionKey === imgKey ? '...' : 'حذف الصورة'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmActionKey(null)}
+                              className="px-1.5 py-0.5 text-[11px] text-slate-500 hover:text-slate-700"
+                            >
+                              إلغاء
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmActionKey(imgKey)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-md transition-colors whitespace-nowrap"
+                            title="حذف الصورة مع بقاء نص الإعمام"
+                          >
+                            <ImageOff className="w-3 h-3" />
+                            <span>حذف الصورة</span>
+                          </button>
+                        ))}
+
+                      {confirmActionKey === delKey ? (
+                        <span className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={busyActionKey === delKey}
+                            onClick={() => handleDeleteBroadcast(item.id)}
+                            className="px-2 py-0.5 text-[11px] font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 rounded"
+                          >
+                            {busyActionKey === delKey ? '...' : 'تأكيد الحذف'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmActionKey(null)}
+                            className="px-1.5 py-0.5 text-[11px] text-slate-500 hover:text-slate-700"
+                          >
+                            إلغاء
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmActionKey(delKey)}
+                          aria-label="حذف الإعمام"
+                          title="حذف الإعمام"
+                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <p className="text-sm font-semibold text-slate-900">{item.title}</p>
                   <p className="text-xs text-slate-600 mt-0.5 leading-relaxed whitespace-pre-line">
