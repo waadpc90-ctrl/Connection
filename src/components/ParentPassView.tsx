@@ -10,6 +10,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { db } from '../lib/firebase';
+import { saveChildPass } from '../lib/parentStorage';
 import { showSystemNotificationViaSW } from '../lib/pushNotifications';
 import {
   classifyPercentage,
@@ -25,6 +26,7 @@ interface ParentPassViewProps {
   passToken?: string;
   demoPass?: StudentPass;
   lockedToPass?: boolean;
+  isAdminPreview?: boolean;
   onExit?: () => void;
   onNotify: (kind: 'success' | 'error', message: string) => void;
 }
@@ -33,6 +35,7 @@ export function ParentPassView({
   passToken,
   demoPass,
   lockedToPass = false,
+  isAdminPreview = false,
   onExit,
   onNotify,
 }: ParentPassViewProps) {
@@ -91,18 +94,14 @@ export function ParentPassView({
           if (nextPass.latestAlert?.id) {
             lastSeenAlertIdRef.current = nextPass.latestAlert.id;
           }
-          try {
-            window.localStorage.setItem(
-              'wisaal_saved_child_pass',
-              JSON.stringify({
-                passToken: nextPass.passToken,
-                studentDisplayName: nextPass.studentDisplayName,
-                className: nextPass.className,
-                stageId: nextPass.stageId || '',
-              })
-            );
-          } catch {
-            // Ignore storage restrictions
+          if (!isAdminPreview) {
+            saveChildPass({
+              passToken: nextPass.passToken,
+              studentDisplayName: nextPass.studentDisplayName,
+              className: nextPass.className,
+              stageId: nextPass.stageId || '',
+              stageName: nextPass.stageName || '',
+            });
           }
           setPassData(nextPass);
           setNotFound(false);
@@ -117,7 +116,7 @@ export function ParentPassView({
     );
 
     return () => unsub();
-  }, [passToken, demoPass, onNotify]);
+  }, [passToken, demoPass, isAdminPreview, onNotify]);
 
   if (loading) {
     return (

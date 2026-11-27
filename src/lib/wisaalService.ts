@@ -1,11 +1,15 @@
 import {
+  collection,
   deleteDoc,
   deleteField,
   doc,
   getDoc,
+  getDocs,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
@@ -98,142 +102,6 @@ export function buildParentsPortalUrl(schoolId?: string): string {
   return schoolId
     ? `${base}?parents=1&school=${encodeURIComponent(schoolId)}`
     : `${base}?parents=1`;
-}
-
-export function normalizeWhatsAppDigits(phone: string): string {
-  const western = phone.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
-  let digits = western.replace(/\D/g, '');
-  if (digits.startsWith('00')) {
-    digits = digits.slice(2);
-  } else if (digits.startsWith('05') && digits.length === 10) {
-    digits = `966${digits.slice(1)}`;
-  } else if (digits.startsWith('07') && digits.length === 11) {
-    digits = `964${digits.slice(1)}`;
-  }
-  return digits;
-}
-
-export function buildWhatsAppUrl(phone: string, message: string): string {
-  const digits = normalizeWhatsAppDigits(phone);
-  const encoded = encodeURIComponent(message);
-  if (!digits) {
-    return `https://wa.me/?text=${encoded}`;
-  }
-  return `https://wa.me/${digits}?text=${encoded}`;
-}
-
-export function buildAttendanceWhatsAppMessage(
-  schoolName: string,
-  stageName: string,
-  student: Student,
-  status: AttendanceStatus,
-  date: string,
-  note: string,
-  passUrl: string
-): string {
-  const parentGreeting = student.parentName
-    ? `المكرم ولي أمر الطالب/ة (${student.parentName})`
-    : 'ولي الأمر الكريم';
-  const formattedDate = formatArabicDate(date);
-  const statusSentence =
-    status === 'absent'
-      ? `نود إبلاغكم بتغيب ابنكم/ابنتكم *${student.fullName}* (${stageName} — ${student.className}) عن الدوام اليوم (${formattedDate}).`
-      : status === 'late'
-        ? `نود إحاطتكم بتأخر ابنكم/ابنتكم *${student.fullName}* (${stageName} — ${student.className}) عن الطابور الصباحي اليوم (${formattedDate}).`
-        : status === 'excused'
-          ? `تم تسجيل غياب ابنكم/ابنتكم *${student.fullName}* (${stageName} — ${student.className}) بتاريخ (${formattedDate}) كغياب بعذر مقبول.`
-          : `نطمئنكم بانتظام حضور ابنكم/ابنتكم *${student.fullName}* (${stageName} — ${student.className}) اليوم (${formattedDate}).`;
-
-  const noteLine = note.trim() ? `\nملاحظة المدرسة: ${note.trim()}` : '';
-
-  return [
-    `السلام عليكم ورحمة الله وبركاته`,
-    `${parentGreeting}،`,
-    statusSentence + noteLine,
-    `\nلمتابعة بطاقة الخلاصة الشاملة للدرجات والغياب أو إرسال عذر مباشرة:`,
-    passUrl,
-    `\nمع خالص التقدير — ${schoolName}`,
-  ].join('\n');
-}
-
-export function buildGradeWhatsAppMessage(
-  schoolName: string,
-  stageName: string,
-  student: Student,
-  entry: Pick<GradeEntry, 'subject' | 'title' | 'score' | 'maxScore' | 'teacherNote'>,
-  passUrl: string
-): string {
-  const percent = Math.round((entry.score / Math.max(1, entry.maxScore)) * 100);
-  const parentGreeting = student.parentName
-    ? `المكرم ولي أمر الطالب/ة (${student.parentName})`
-    : 'ولي الأمر الكريم';
-
-  const opener =
-    percent >= 85
-      ? `يسعدنا تهنئتكم بتفوق ابنكم/ابنتكم *${student.fullName}* (${stageName} — ${student.className}) في مادة *${entry.subject}* (${entry.title}) بحصوله على *${entry.score} من ${entry.maxScore}* (${percent}%).`
-      : percent >= 70
-        ? `نحيطكم علماً برصد درجة ابنكم/ابنتكم *${student.fullName}* (${stageName} — ${student.className}) في مادة *${entry.subject}* (${entry.title}): *${entry.score} من ${entry.maxScore}* (${percent}%).`
-        : `نود مشاركتكم نتيجة ابنكم/ابنتكم *${student.fullName}* (${stageName} — ${student.className}) في مادة *${entry.subject}* (${entry.title}): *${entry.score} من ${entry.maxScore}* (${percent}%)، ونأمل تعاونكم معنا في المتابعة لتحسين الأداء.`;
-
-  const noteLine = entry.teacherNote.trim() ? `\nملاحظة المعلم: ${entry.teacherNote.trim()}` : '';
-
-  return [
-    `السلام عليكم ورحمة الله وبركاته`,
-    `${parentGreeting}،`,
-    opener + noteLine,
-    `\nللاطلاع على بطاقة خلاصة جميع المواد والغياب عبر وصال:`,
-    passUrl,
-    `\nمع خالص التحية — ${schoolName}`,
-  ].join('\n');
-}
-
-export function buildStudentSummaryWhatsAppMessage(
-  schoolName: string,
-  stageName: string,
-  student: Student,
-  metrics: {
-    subjectSummaries: SubjectSummary[];
-    totalScoreSum: number;
-    totalMaxScoreSum: number;
-    averagePercent: number;
-    totalAbsent: number;
-    totalLate: number;
-  },
-  passUrl: string,
-  latestSubjectHighlight?: string
-): string {
-  const parentGreeting = student.parentName
-    ? `المكرم ولي أمر الطالب/ة (${student.parentName})`
-    : 'ولي الأمر الكريم';
-  const rating = classifyPercentage(metrics.averagePercent);
-
-  const subjectLines =
-    metrics.subjectSummaries.length > 0
-      ? metrics.subjectSummaries
-          .map((s) => `• ${s.subject}: *${s.latestScore} / ${s.latestMaxScore}* (${s.averagePercent}%)`)
-          .join('\n')
-      : '• لا توجد درجات مرصودة بعد.';
-
-  const headerLine = latestSubjectHighlight
-    ? `تم تحديث بطاقة درجات ابنكم/ابنتكم *${student.fullName}* (${stageName} — ${student.className}) بعد رصد مادة *${latestSubjectHighlight}*.`
-    : `إليكم خلاصة الدرجات والغياب لابنكم/ابنتكم *${student.fullName}* (${stageName} — ${student.className}):`;
-
-  return [
-    `السلام عليكم ورحمة الله وبركاته`,
-    `${parentGreeting}،`,
-    headerLine,
-    `\n*خلاصة جميع المواد:*`,
-    subjectLines,
-    metrics.subjectSummaries.length > 0
-      ? `\n*المجموع الكلي:* ${metrics.totalScoreSum} من ${metrics.totalMaxScoreSum} · *المعدل العام:* ${metrics.averagePercent}% (${rating.label})`
-      : '',
-    `*ملخص الحضور (${stageName}):* الغياب بدون عذر: ${metrics.totalAbsent} · التأخر: ${metrics.totalLate}`,
-    `\nلفتح بطاقة الطالب الحية بكامل التفاصيل وتأكيد الاطلاع:`,
-    passUrl,
-    `\nمع خالص التحية — ${schoolName}`,
-  ]
-    .filter(Boolean)
-    .join('\n');
 }
 
 // --- Multi-Subject & Stage-Isolated Pass Aggregation Helper ---
@@ -657,6 +525,8 @@ export async function sendStageCollectiveBroadcast(
   affectedStudentsCount: number;
   affectedSectionsCount: number;
   externalPushSent: number;
+  externalPushAttempted: number;
+  externalPushServerReachable: boolean;
 }> {
   const tokens = school.stageTokens || (await ensureSchoolDocument(uid, school));
   const stageToken = tokens[stageId];
@@ -804,6 +674,8 @@ export async function sendStageCollectiveBroadcast(
       affectedStudentsCount: targetedStudents.length,
       affectedSectionsCount: targetClass ? 1 : stageClassrooms.length,
       externalPushSent: pushResult.sent,
+      externalPushAttempted: pushResult.attempted,
+      externalPushServerReachable: pushResult.serverReachable,
     };
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `stagePortals/${stageToken}`);
@@ -822,7 +694,13 @@ export async function sendDirectStudentMessage(
     imageDataUrl?: string;
     imageCaption?: string;
   }
-): Promise<{ alert: PassAlert; mediaId?: string; externalPushSent: number }> {
+): Promise<{
+  alert: PassAlert;
+  mediaId?: string;
+  externalPushSent: number;
+  externalPushAttempted: number;
+  externalPushServerReachable: boolean;
+}> {
   const stageNames = getSchoolStageNames(school);
   const cleanSchoolName = sanitizeText(school.name, FIELD_LIMITS.schoolName);
   const cleanTitle = sanitizeText(payload.title, 140) || 'رسالة من إدارة المدرسة';
@@ -880,7 +758,13 @@ export async function sendDirectStudentMessage(
       requireInteraction: payload.kind === 'urgent',
     });
 
-    return { alert, mediaId: imageRef?.mediaId, externalPushSent: pushResult.sent };
+    return {
+      alert,
+      mediaId: imageRef?.mediaId,
+      externalPushSent: pushResult.sent,
+      externalPushAttempted: pushResult.attempted,
+      externalPushServerReachable: pushResult.serverReachable,
+    };
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `passes/${student.passToken}`);
   }
@@ -947,30 +831,34 @@ export async function deleteStageBroadcast(
       );
     }
 
-    // Clean up matching latestAlert on targeted students' passes (non-blocking)
+    // Clean up matching latestAlert on ALL targeted students' passes in chunks (non-blocking)
     if (target && stageStudents.length > 0) {
       const candidates =
         target.targetClassId === 'all'
           ? stageStudents
           : stageStudents.filter((s) => s.classId === target.targetClassId);
 
-      await Promise.allSettled(
-        candidates.slice(0, 60).map(async (stu) => {
-          const passRef = doc(db, 'passes', stu.passToken);
-          const passSnap = await getDoc(passRef);
-          if (!passSnap.exists()) return;
-          const alert = (passSnap.data() as { latestAlert?: PassAlert }).latestAlert;
-          if (!alert) return;
-          const matchesMedia = Boolean(deletedMediaId && alert.imageMediaId === deletedMediaId);
-          const matchesText = alert.title === target.title && alert.body === target.body;
-          if (matchesMedia || matchesText) {
-            await updateDoc(passRef, {
-              latestAlert: deleteField(),
-              updatedAt: serverTimestamp(),
-            });
-          }
-        })
-      );
+      const CLEANUP_CHUNK = 25;
+      for (let i = 0; i < candidates.length; i += CLEANUP_CHUNK) {
+        const chunk = candidates.slice(i, i + CLEANUP_CHUNK);
+        await Promise.allSettled(
+          chunk.map(async (stu) => {
+            const passRef = doc(db, 'passes', stu.passToken);
+            const passSnap = await getDoc(passRef);
+            if (!passSnap.exists()) return;
+            const alert = (passSnap.data() as { latestAlert?: PassAlert }).latestAlert;
+            if (!alert) return;
+            const matchesMedia = Boolean(deletedMediaId && alert.imageMediaId === deletedMediaId);
+            const matchesText = alert.title === target.title && alert.body === target.body;
+            if (matchesMedia || matchesText) {
+              await updateDoc(passRef, {
+                latestAlert: deleteField(),
+                updatedAt: serverTimestamp(),
+              });
+            }
+          })
+        );
+      }
     }
 
     return { deletedMediaId };
@@ -1028,20 +916,24 @@ export async function removeStageBroadcastImage(
           ? stageStudents
           : stageStudents.filter((s) => s.classId === target.targetClassId);
 
-      await Promise.allSettled(
-        candidates.slice(0, 60).map(async (stu) => {
-          const passRef = doc(db, 'passes', stu.passToken);
-          const passSnap = await getDoc(passRef);
-          if (!passSnap.exists()) return;
-          const alert = (passSnap.data() as { latestAlert?: PassAlert }).latestAlert;
-          if (alert && alert.imageMediaId === deletedMediaId) {
-            await updateDoc(passRef, {
-              latestAlert: stripImageFromPassAlert(alert),
-              updatedAt: serverTimestamp(),
-            });
-          }
-        })
-      );
+      const CLEANUP_CHUNK = 25;
+      for (let i = 0; i < candidates.length; i += CLEANUP_CHUNK) {
+        const chunk = candidates.slice(i, i + CLEANUP_CHUNK);
+        await Promise.allSettled(
+          chunk.map(async (stu) => {
+            const passRef = doc(db, 'passes', stu.passToken);
+            const passSnap = await getDoc(passRef);
+            if (!passSnap.exists()) return;
+            const alert = (passSnap.data() as { latestAlert?: PassAlert }).latestAlert;
+            if (alert && alert.imageMediaId === deletedMediaId) {
+              await updateDoc(passRef, {
+                latestAlert: stripImageFromPassAlert(alert),
+                updatedAt: serverTimestamp(),
+              });
+            }
+          })
+        );
+      }
     }
 
     return { deletedMediaId };
@@ -1584,6 +1476,8 @@ export async function updateStudentAndPass(
   const cleanParentName = sanitizeText(input.parentName, FIELD_LIMITS.parentName);
   const cleanParentPhone = sanitizePhone(input.parentPhone);
   const cleanClassName = sanitizeText(classroom.name, FIELD_LIMITS.className);
+  const movedClassOrStage = student.classId !== classroom.id || student.stageId !== stageId;
+  const renamedStudent = student.fullName !== cleanName;
 
   try {
     const batch = writeBatch(db);
@@ -1608,6 +1502,43 @@ export async function updateStudentAndPass(
     });
 
     await batch.commit();
+
+    // Keep historical attendance logs and grade entries aligned if student moved class/stage or was renamed
+    if (movedClassOrStage || renamedStudent) {
+      const [attSnap, grdSnap] = await Promise.all([
+        getDocs(
+          query(
+            collection(db, 'schools', uid, 'attendanceLogs'),
+            where('studentId', '==', student.id)
+          )
+        ),
+        getDocs(
+          query(
+            collection(db, 'schools', uid, 'gradeEntries'),
+            where('studentId', '==', student.id)
+          )
+        ),
+      ]);
+
+      const refsToSync = [
+        ...attSnap.docs.map((d) => ({ ref: d.ref })),
+        ...grdSnap.docs.map((d) => ({ ref: d.ref })),
+      ];
+
+      const CHUNK = 150;
+      for (let i = 0; i < refsToSync.length; i += CHUNK) {
+        const subBatch = writeBatch(db);
+        for (const item of refsToSync.slice(i, i + CHUNK)) {
+          subBatch.update(item.ref, {
+            stageId,
+            classId: classroom.id,
+            studentName: cleanName,
+            updatedAt: serverTimestamp(),
+          });
+        }
+        await subBatch.commit();
+      }
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -1616,12 +1547,115 @@ export async function updateStudentAndPass(
 export async function deleteStudentWithPass(uid: string, student: Student): Promise<void> {
   const path = `schools/${uid}/students/${student.id}`;
   try {
-    const batch = writeBatch(db);
-    batch.delete(doc(db, 'schools', uid, 'students', student.id));
-    batch.delete(doc(db, 'passes', student.passToken));
-    await batch.commit();
+    // 1. Collect all orphaned child records (attendance logs, grade entries, pass subcollections)
+    const [attSnap, grdSnap, pushSnap, ackSnap, passSnap] = await Promise.all([
+      getDocs(
+        query(collection(db, 'schools', uid, 'attendanceLogs'), where('studentId', '==', student.id))
+      ),
+      getDocs(
+        query(collection(db, 'schools', uid, 'gradeEntries'), where('studentId', '==', student.id))
+      ),
+      getDocs(
+        query(
+          collection(db, 'passes', student.passToken, 'pushSubscriptions'),
+          where('schoolOwnerId', '==', uid)
+        )
+      ).catch(() => null),
+      getDocs(
+        query(
+          collection(db, 'passes', student.passToken, 'acknowledgements'),
+          where('schoolOwnerId', '==', uid)
+        )
+      ).catch(() => null),
+      getDoc(doc(db, 'passes', student.passToken)).catch(() => null),
+    ]);
+
+    const deleteRefs = [
+      ...attSnap.docs.map((d) => d.ref),
+      ...grdSnap.docs.map((d) => d.ref),
+      ...(pushSnap ? pushSnap.docs.map((d) => d.ref) : []),
+      ...(ackSnap ? ackSnap.docs.map((d) => d.ref) : []),
+    ];
+
+    if (passSnap?.exists()) {
+      const alert = (passSnap.data() as { latestAlert?: PassAlert }).latestAlert;
+      if (alert?.imageScope === 'pass' && alert.imageMediaId) {
+        deleteRefs.push(doc(db, 'passes', student.passToken, 'media', alert.imageMediaId));
+      }
+    }
+
+    // Delete dependent records in safe batches (< 500 ops)
+    const CHUNK = 200;
+    for (let i = 0; i < deleteRefs.length; i += CHUNK) {
+      const depBatch = writeBatch(db);
+      for (const ref of deleteRefs.slice(i, i + CHUNK)) {
+        depBatch.delete(ref);
+      }
+      await depBatch.commit();
+    }
+
+    // Finally delete the student document and their public pass atomically
+    const finalBatch = writeBatch(db);
+    finalBatch.delete(doc(db, 'schools', uid, 'students', student.id));
+    finalBatch.delete(doc(db, 'passes', student.passToken));
+    await finalBatch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function promoteStageStudents(
+  uid: string,
+  school: School,
+  fromStageId: StageId,
+  toStageId: StageId,
+  targetClassroom: Classroom,
+  allClassrooms: Classroom[],
+  allStudents: Student[]
+): Promise<{ promotedCount: number }> {
+  const path = `schools/${uid}/students`;
+  const stageNames = getSchoolStageNames(school);
+  const cleanClassName = sanitizeText(targetClassroom.name, FIELD_LIMITS.className);
+  const targetStageStudents = allStudents.filter((s) => s.stageId === fromStageId);
+
+  if (targetStageStudents.length === 0) {
+    return { promotedCount: 0 };
+  }
+
+  try {
+    // Update students + passes in chunks of 100 (= 200 ops per batch)
+    const CHUNK = 100;
+    for (let i = 0; i < targetStageStudents.length; i += CHUNK) {
+      const chunk = targetStageStudents.slice(i, i + CHUNK);
+      const batch = writeBatch(db);
+      for (const stu of chunk) {
+        batch.update(doc(db, 'schools', uid, 'students', stu.id), {
+          stageId: toStageId,
+          classId: targetClassroom.id,
+          className: cleanClassName,
+          updatedAt: serverTimestamp(),
+        });
+        batch.update(doc(db, 'passes', stu.passToken), {
+          stageId: toStageId,
+          stageName: stageNames[toStageId],
+          className: cleanClassName,
+          updatedAt: serverTimestamp(),
+        });
+      }
+      await batch.commit();
+    }
+
+    // Sync updated section student counts to stage portals
+    const updatedStudents = allStudents.map((s) =>
+      s.stageId === fromStageId
+        ? { ...s, stageId: toStageId, classId: targetClassroom.id, className: cleanClassName }
+        : s
+    );
+    await syncStagePortalsMetadata(uid, school, allClassrooms, updatedStudents, false);
+
+    return { promotedCount: targetStageStudents.length };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
 
@@ -1797,44 +1831,37 @@ export async function saveClassAttendanceBatch(
         const st = statusMap[s.id] || 'present';
         return st === 'absent' || st === 'late';
       });
-      void Promise.allSettled(
-        alertStudents.slice(0, 30).map((student) => {
-          const st = statusMap[student.id];
-          const note = sanitizeText(noteMap[student.id] || '', FIELD_LIMITS.note);
-          const title =
-            st === 'absent'
-              ? `${school.name}: تنبيه غياب ${student.fullName}`
-              : `${school.name}: إشعار تأخر ${student.fullName}`;
-          const body =
-            st === 'absent'
-              ? `تم تسجيل غياب ${student.fullName} اليوم (${formatArabicDate(date)})${note ? ` — ${note}` : ''}.`
-              : `تم تسجيل تأخر ${student.fullName} اليوم (${formatArabicDate(date)})${note ? ` — ${note}` : ''}.`;
-          return dispatchExternalPushForStudentPass({
-            uid,
-            passToken: student.passToken,
-            title: title.slice(0, 140),
-            body: body.slice(0, 500),
-            tag: `att_${date}_${student.id}`,
-            requireInteraction: st === 'absent',
-          });
-        })
-      );
+      void (async () => {
+        const PUSH_CHUNK = 25;
+        for (let i = 0; i < alertStudents.length; i += PUSH_CHUNK) {
+          const chunk = alertStudents.slice(i, i + PUSH_CHUNK);
+          await Promise.allSettled(
+            chunk.map((student) => {
+              const st = statusMap[student.id];
+              const note = sanitizeText(noteMap[student.id] || '', FIELD_LIMITS.note);
+              const title =
+                st === 'absent'
+                  ? `${school.name}: تنبيه غياب ${student.fullName}`
+                  : `${school.name}: إشعار تأخر ${student.fullName}`;
+              const body =
+                st === 'absent'
+                  ? `تم تسجيل غياب ${student.fullName} اليوم (${formatArabicDate(date)})${note ? ` — ${note}` : ''}.`
+                  : `تم تسجيل تأخر ${student.fullName} اليوم (${formatArabicDate(date)})${note ? ` — ${note}` : ''}.`;
+              return dispatchExternalPushForStudentPass({
+                uid,
+                passToken: student.passToken,
+                title: title.slice(0, 140),
+                body: body.slice(0, 500),
+                tag: `att_${date}_${student.id}`,
+                requireInteraction: st === 'absent',
+              });
+            })
+          );
+        }
+      })();
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
-  }
-}
-
-export async function markAttendanceNotified(uid: string, logId: string): Promise<void> {
-  const path = `schools/${uid}/attendanceLogs/${logId}`;
-  try {
-    await updateDoc(doc(db, 'schools', uid, 'attendanceLogs', logId), {
-      notifiedViaWhatsapp: true,
-      notifiedAt: new Date().toISOString().slice(0, 19),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
 
@@ -2082,18 +2109,6 @@ export async function pushInstantSummaryAlertToSection(
   }
 }
 
-export async function markGradeNotified(uid: string, gradeId: string): Promise<void> {
-  const path = `schools/${uid}/gradeEntries/${gradeId}`;
-  try {
-    await updateDoc(doc(db, 'schools', uid, 'gradeEntries', gradeId), {
-      notifiedViaWhatsapp: true,
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
-  }
-}
-
 export async function deleteGradeEntryAndSyncPass(
   uid: string,
   entry: GradeEntry,
@@ -2128,48 +2143,6 @@ export async function deleteGradeEntryAndSyncPass(
     await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
-  }
-}
-
-export async function submitParentAcknowledgement(
-  pass: StudentPass,
-  authorUid: string,
-  payload: {
-    type: 'seen' | 'excuse';
-    targetDate: string;
-    message: string;
-    senderLabel: string;
-  }
-): Promise<void> {
-  const ackId = generateSafeId('ack');
-  const path = `passes/${pass.passToken}/acknowledgements/${ackId}`;
-  try {
-    await setDoc(doc(db, 'passes', pass.passToken, 'acknowledgements', ackId), {
-      authorId: authorUid,
-      schoolOwnerId: pass.ownerId,
-      studentId: pass.studentId,
-      type: payload.type,
-      targetDate: payload.targetDate || '',
-      message: sanitizeText(payload.message, FIELD_LIMITS.ackMessage),
-      senderLabel: sanitizeText(payload.senderLabel || 'ولي الأمر', FIELD_LIMITS.senderLabel),
-      schoolStatus: 'pending',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, path);
-  }
-}
-
-export async function markAcknowledgementReviewed(passToken: string, ackId: string): Promise<void> {
-  const path = `passes/${passToken}/acknowledgements/${ackId}`;
-  try {
-    await updateDoc(doc(db, 'passes', passToken, 'acknowledgements', ackId), {
-      schoolStatus: 'reviewed',
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
 

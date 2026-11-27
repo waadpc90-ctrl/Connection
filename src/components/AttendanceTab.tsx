@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Camera, ClipboardCheck, ExternalLink, ListChecks, RotateCcw } from 'lucide-react';
+import { Camera, ClipboardCheck, Download, ExternalLink, ListChecks, RotateCcw } from 'lucide-react';
+import { exportSectionAttendanceCsv } from '../lib/csvExport';
 import { saveClassAttendanceBatch } from '../lib/wisaalService';
 import {
   AttendanceLog,
@@ -201,7 +202,46 @@ export function AttendanceTab({
           </div>
 
           {subMode === 'manual' && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={classStudents.length === 0}
+                onClick={() => {
+                  const logsForDate = new Map<string, AttendanceLog>();
+                  for (const s of classStudents) {
+                    const existing = attendanceLogs.find(
+                      (l) => l.studentId === s.id && l.date === selectedDate && l.classId === selectedClassId
+                    );
+                    logsForDate.set(s.id, {
+                      id: existing?.id || `${s.id}_${selectedDate}`,
+                      ownerId: uid,
+                      schoolId: school.id,
+                      stageId,
+                      classId: selectedClassId,
+                      studentId: s.id,
+                      studentName: s.fullName,
+                      date: selectedDate,
+                      status: statusMap[s.id] || existing?.status || 'present',
+                      note: noteMap[s.id] ?? existing?.note ?? '',
+                      notifiedViaWhatsapp: existing?.notifiedViaWhatsapp ?? false,
+                      notifiedAt: existing?.notifiedAt ?? '',
+                    });
+                  }
+                  exportSectionAttendanceCsv({
+                    sectionName: `${stageName}_${activeClassroom?.name || 'الشعبة'}`,
+                    date: selectedDate,
+                    students: classStudents,
+                    logsForDate,
+                    allLogs: attendanceLogs.filter((l) => l.classId === selectedClassId),
+                  });
+                  onNotify('success', 'تم تصدير سجل الحضور (Excel).');
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-700" />
+                <span>تصدير Excel</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleSetAllPresent}

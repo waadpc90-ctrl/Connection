@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { KeyRound, Plus, Save, Sparkles, Trash2, UserPlus, Users } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowUpRight, KeyRound, Plus, Save, Sparkles, Trash2, UserPlus, Users } from 'lucide-react';
 import {
   isValidAdminPinFormat,
   isValidStaffEmail,
@@ -8,6 +8,7 @@ import {
 } from '../lib/adminSecurity';
 import {
   addSchoolStaffMember,
+  promoteStageStudents,
   removeSchoolStaffMember,
   setSchoolAdminPin,
   updateSchoolSettings,
@@ -18,11 +19,13 @@ import {
   FIELD_LIMITS,
   getSchoolStageNames,
   getSchoolSubjects,
+  resolveClassroomStageId,
   School,
   STAFF_ROLE_LABELS,
   StaffMember,
   StaffRole,
   STAGE_IDS,
+  StageId,
   StageNamesMap,
   Student,
 } from '../types/wisaal';
@@ -81,6 +84,29 @@ export function SettingsTab({
   const [staffRole, setStaffRole] = useState<StaffRole>('teacher');
   const [addingStaff, setAddingStaff] = useState<boolean>(false);
   const [removingEmail, setRemovingEmail] = useState<string | null>(null);
+
+  // End-of-year stage promotion state (Owner only)
+  const [promoteFromStage, setPromoteFromStage] = useState<StageId>('stage_1');
+  const [promoteTargetClassId, setPromoteTargetClassId] = useState<string>('');
+  const [confirmPromote, setConfirmPromote] = useState<boolean>(false);
+  const [promoting, setPromoting] = useState<boolean>(false);
+
+  const promoteToStage: StageId = promoteFromStage === 'stage_1' ? 'stage_2' : 'stage_3';
+  const targetStageClassrooms = useMemo(
+    () => classrooms.filter((c) => resolveClassroomStageId(c) === promoteToStage),
+    [classrooms, promoteToStage]
+  );
+  const sourceStageStudentCount = useMemo(
+    () => students.filter((s) => s.stageId === promoteFromStage).length,
+    [students, promoteFromStage]
+  );
+
+  useEffect(() => {
+    if (!targetStageClassrooms.some((c) => c.id === promoteTargetClassId)) {
+      setPromoteTargetClassId(targetStageClassrooms[0]?.id || '');
+    }
+    setConfirmPromote(false);
+  }, [promoteFromStage, targetStageClassrooms, promoteTargetClassId]);
 
   useEffect(() => {
     setName(school.name);
@@ -222,6 +248,41 @@ export function SettingsTab({
       onNotify('error', 'تعذر إزالة العضو.');
     } finally {
       setRemovingEmail(null);
+    }
+  };
+
+  const handlePromoteStage = async () => {
+    if (!isSchoolOwner) return;
+    const targetCls = targetStageClassrooms.find((c) => c.id === promoteTargetClassId);
+    if (!targetCls) {
+      onNotify('error', 'أضف شعبة في المرحلة التالية أولاً.');
+      return;
+    }
+    if (sourceStageStudentCount === 0) {
+      onNotify('error', 'لا يوجد طلاب في المرحلة المختارة.');
+      return;
+    }
+
+    setPromoting(true);
+    try {
+      const { promotedCount } = await promoteStageStudents(
+        uid,
+        school,
+        promoteFromStage,
+        promoteToStage,
+        targetCls,
+        classrooms,
+        students
+      );
+      setConfirmPromote(false);
+      onNotify(
+        'success',
+        `تم ترفيع ${promotedCount} طالب إلى ${stageNames[promoteToStage]} (${targetCls.name}).`
+      );
+    } catch {
+      onNotify('error', 'تعذر ترفيع الطلاب.');
+    } finally {
+      setPromoting(false);
     }
   };
 
@@ -567,6 +628,99 @@ export function SettingsTab({
               <span>{savingPin ? 'جاري التحديث...' : 'تحديث الرمز'}</span>
             </button>
           </form>
+        </section>
+      )}
+
+      {isSchoolOwner && (
+        <section className="bg-white border border-slate-200/80 rounded-xl p-5 sm:p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <ArrowUpRight className="w-4 h-4 text-emerald-700" />
+            <h2 className="font-display text-base font-bold text-slate-900">
+              ترفيع طلاب المرحلة (نهاية العام)
+            </h2>
+          </div>
+
+          <p className="text-xs text-slate-500 leading-relaxed">
+            انقل جميع طلاب مرحلة كاملة إلى المرحلة التالية مع الاحتفاظ ببطاقات QR نفسها لأولياء الأمور.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">
+                المرحلة المراد ترفيعها
+              </label>
+              <select
+                value={promoteFromStage}
+                onChange={(e) => setPromoteFromStage(e.target.value as StageId)}
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+              >
+                <option value="stage_1">
+                  {stageNames.stage_1} ← {stageNames.stage_2}
+                </option>
+                <option value="stage_2">
+                  {stageNames.stage_2} ← {stageNames.stage_3}
+                </option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">
+                الشعبة المستقبِلة في {stageNames[promoteToStage]}
+              </label>
+              <select
+                value={promoteTargetClassId}
+                onChange={(e) => setPromoteTargetClassId(e.target.value)}
+                disabled={targetStageClassrooms.length === 0}
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700 disabled:bg-slate-50"
+              >
+                {targetStageClassrooms.length === 0 ? (
+                  <option value="">لا توجد شعب في {stageNames[promoteToStage]}</option>
+                ) : (
+                  targetStageClassrooms.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <span className="text-xs text-slate-500 font-mono tabular-nums">
+              عدد الطلاب: {sourceStageStudentCount}
+            </span>
+
+            {confirmPromote ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={promoting}
+                  onClick={handlePromoteStage}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg"
+                >
+                  {promoting ? 'جاري الترفيع...' : `تأكيد ترفيع (${sourceStageStudentCount})`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmPromote(false)}
+                  className="px-3 py-2 text-xs text-slate-600 hover:text-slate-900"
+                >
+                  إلغاء
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={sourceStageStudentCount === 0 || !promoteTargetClassId}
+                onClick={() => setConfirmPromote(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 disabled:opacity-50 rounded-lg"
+              >
+                <ArrowUpRight className="w-3.5 h-3.5" />
+                <span>ترفيع الطلاب</span>
+              </button>
+            )}
+          </div>
         </section>
       )}
 

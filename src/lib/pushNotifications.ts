@@ -415,6 +415,12 @@ export async function sendLocalTestExternalNotification(
 
 // --- School-Side External Push Dispatch (Authenticated via Firebase Bearer Token) ---
 
+export interface PushDispatchResult {
+  sent: number;
+  attempted: number;
+  serverReachable: boolean;
+}
+
 async function postPushBatchToServer(payload: {
   title: string;
   body: string;
@@ -422,34 +428,67 @@ async function postPushBatchToServer(payload: {
   tag?: string;
   requireInteraction?: boolean;
   subscriptions: Array<{ endpoint: string; p256dh: string; auth: string }>;
-}): Promise<{ sent: number; failed: number; expiredEndpoints: string[] }> {
+}): Promise<{ sent: number; failed: number; expiredEndpoints: string[]; serverReachable: boolean }> {
   if (payload.subscriptions.length === 0) {
-    return { sent: 0, failed: 0, expiredEndpoints: [] };
+    return { sent: 0, failed: 0, expiredEndpoints: [], serverReachable: true };
   }
   const currentUser = auth.currentUser;
   if (!currentUser) {
-    return { sent: 0, failed: 0, expiredEndpoints: [] };
+    return { sent: 0, failed: 0, expiredEndpoints: [], serverReachable: false };
   }
   try {
     const idToken = await currentUser.getIdToken();
-    const resp = await fetch(buildApiUrl('/api/push/send'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${idToken}`,
-      },
-      body: JSON.stringify(payload),
-    });
-    if (!resp.ok) {
-      return { sent: 0, failed: payload.subscriptions.length, expiredEndpoints: [] };
+    const BATCH_LIMIT = 500;
+    let totalSent = 0;
+    let totalFailed = 0;
+    const allExpired: string[] = [];
+    let anyReachable = false;
+
+    for (let i = 0; i < payload.subscriptions.length; i += BATCH_LIMIT) {
+      const subChunk = payload.subscriptions.slice(i, i + BATCH_LIMIT);
+      const resp = await fetch(buildApiUrl('/api/push/send'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ ...payload, subscriptions: subChunk }),
+      });
+      if (!resp.ok) {
+        totalFailed += subChunk.length;
+        continue;
+      }
+      const contentType = resp.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        totalFailed += subChunk.length;
+        continue;
+      }
+      anyReachable = true;
+      const json = (await resp.json()) as {
+        sent?: number;
+        failed?: number;
+        expiredEndpoints?: string[];
+      };
+      totalSent += Number(json.sent || 0);
+      totalFailed += Number(json.failed || 0);
+      if (Array.isArray(json.expiredEndpoints)) {
+        allExpired.push(...json.expiredEndpoints);
+      }
     }
-    return (await resp.json()) as {
-      sent: number;
-      failed: number;
-      expiredEndpoints: string[];
+
+    return {
+      sent: totalSent,
+      failed: totalFailed,
+      expiredEndpoints: allExpired,
+      serverReachable: anyReachable,
     };
   } catch {
-    return { sent: 0, failed: payload.subscriptions.length, expiredEndpoints: [] };
+    return {
+      sent: 0,
+      failed: payload.subscriptions.length,
+      expiredEndpoints: [],
+      serverReachable: false,
+    };
   }
 }
 
@@ -499,7 +538,7 @@ export async function dispatchExternalPushForStageBroadcast(params: {
   body: string;
   tag: string;
   requireInteraction?: boolean;
-}): Promise<{ sent: number }> {
+}): Promise<PushDispatchResult> {
   try {
     const stageSubs = await loadSubscriptionsForParent(params.uid, 'stagePortals', params.stageToken);
     const matchingStageSubs = stageSubs.filter(
@@ -509,15 +548,22 @@ export async function dispatchExternalPushForStageBroadcast(params: {
         sub.sectionId === params.targetClassId
     );
 
-    const passSubsArrays = await Promise.all(
-      params.targetedPassTokens
-        .slice(0, 40)
-        .map((pt) => loadSubscriptionsForParent(params.uid, 'passes', pt))
-    );
-    const passSubs = passSubsArrays.flat();
+    const passSubs: Array<PushSubscriptionDoc & { parentCollection: 'stagePortals' | 'passes'; scopeToken: string }> = [];
+    const TOKEN_CHUNK = 25;
+    for (let i = 0; i < params.targetedPassTokens.length; i += TOKEN_CHUNK) {
+      const chunk = params.targetedPassTokens.slice(i, i + TOKEN_CHUNK);
+      const chunkArrays = await Promise.all(
+        chunk.map((pt) => loadSubscriptionsForParent(params.uid, 'passes', pt))
+      );
+      for (const arr of chunkArrays) {
+        passSubs.push(...arr);
+      }
+    }
 
     const allRecords = [...matchingStageSubs, ...passSubs];
-    if (allRecords.length === 0) return { sent: 0 };
+    if (allRecords.length === 0) {
+      return { sent: 0, attempted: 0, serverReachable: true };
+    }
 
     const seen = new Set<string>();
     const uniqueSubs: Array<{ endpoint: string; p256dh: string; auth: string }> = [];
@@ -537,9 +583,13 @@ export async function dispatchExternalPushForStageBroadcast(params: {
     });
 
     await cleanupExpiredSubscriptions(allRecords, res.expiredEndpoints);
-    return { sent: res.sent };
+    return {
+      sent: res.sent,
+      attempted: uniqueSubs.length,
+      serverReachable: res.serverReachable,
+    };
   } catch {
-    return { sent: 0 };
+    return { sent: 0, attempted: 0, serverReachable: false };
   }
 }
 
@@ -550,10 +600,12 @@ export async function dispatchExternalPushForStudentPass(params: {
   body: string;
   tag: string;
   requireInteraction?: boolean;
-}): Promise<{ sent: number }> {
+}): Promise<PushDispatchResult> {
   try {
     const passSubs = await loadSubscriptionsForParent(params.uid, 'passes', params.passToken);
-    if (passSubs.length === 0) return { sent: 0 };
+    if (passSubs.length === 0) {
+      return { sent: 0, attempted: 0, serverReachable: true };
+    }
 
     const res = await postPushBatchToServer({
       title: params.title,
@@ -569,8 +621,12 @@ export async function dispatchExternalPushForStudentPass(params: {
     });
 
     await cleanupExpiredSubscriptions(passSubs, res.expiredEndpoints);
-    return { sent: res.sent };
+    return {
+      sent: res.sent,
+      attempted: passSubs.length,
+      serverReachable: res.serverReachable,
+    };
   } catch {
-    return { sent: 0 };
+    return { sent: 0, attempted: 0, serverReachable: false };
   }
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BellRing,
   Camera,
+  Download,
   ExternalLink,
   Layers,
   Pencil,
@@ -11,6 +12,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { exportSectionGradesCsv } from '../lib/csvExport';
 import {
   computePassMetrics,
   deleteGradeEntryAndSyncPass,
@@ -689,7 +691,26 @@ export function GradesTab({
               خلاصة {activeClassroom?.name}
             </h3>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={classStudents.length === 0}
+                onClick={() => {
+                  exportSectionGradesCsv({
+                    schoolName: school.name,
+                    stageName,
+                    sectionName: activeClassroom?.name || 'الشعبة',
+                    subjects: sectionSubjects,
+                    rows: sectionSummaryRows,
+                  });
+                  onNotify('success', 'تم تصدير كشف الدرجات (Excel).');
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 disabled:opacity-50 rounded-lg whitespace-nowrap"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-700" />
+                <span>تصدير Excel</span>
+              </button>
+
               {stageToken && (
                 <button
                   type="button"

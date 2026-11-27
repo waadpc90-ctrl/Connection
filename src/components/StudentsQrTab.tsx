@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   Check,
-  CheckCircle2,
   Copy,
   ExternalLink,
   Pencil,
@@ -15,17 +13,23 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import {
   buildPassUrl,
   createClassroom,
   createStudentWithPass,
   deleteClassroom,
   deleteStudentWithPass,
-  markAcknowledgementReviewed,
   updateStudentAndPass,
 } from '../lib/wisaalService';
-import { Classroom, ParentAcknowledgement, School, StageId, Student } from '../types/wisaal';
+import {
+  Classroom,
+  getSchoolStageNames,
+  resolveClassroomStageId,
+  School,
+  STAGE_IDS,
+  StageId,
+  Student,
+} from '../types/wisaal';
 import { BulkStudentsImportModal } from './BulkStudentsImportModal';
 
 interface StudentsQrTabProps {
@@ -34,7 +38,9 @@ interface StudentsQrTabProps {
   stageId: StageId;
   stageName: string;
   classrooms: Classroom[];
+  allClassrooms: Classroom[];
   students: Student[];
+  canDeleteRecords: boolean;
   onPreviewPass: (passToken: string) => void;
   onNotify: (kind: 'success' | 'error', message: string) => void;
 }
@@ -45,7 +51,9 @@ export function StudentsQrTab({
   stageId,
   stageName,
   classrooms,
+  allClassrooms,
   students,
+  canDeleteRecords,
   onPreviewPass,
   onNotify,
 }: StudentsQrTabProps) {
@@ -73,38 +81,13 @@ export function StudentsQrTab({
   const [savingStudent, setSavingStudent] = useState<boolean>(false);
 
   const [qrStudent, setQrStudent] = useState<Student | null>(null);
-  const [studentAcks, setStudentAcks] = useState<ParentAcknowledgement[]>([]);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   const [confirmDeleteStudentId, setConfirmDeleteStudentId] = useState<string | null>(null);
   const [confirmDeleteClassId, setConfirmDeleteClassId] = useState<string | null>(null);
   const [printSheetMode, setPrintSheetMode] = useState<boolean>(false);
 
-  useEffect(() => {
-    if (!qrStudent) {
-      setStudentAcks([]);
-      return;
-    }
-
-    const acksCol = collection(db, 'passes', qrStudent.passToken, 'acknowledgements');
-    const q = query(acksCol, where('schoolOwnerId', '==', uid));
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        setStudentAcks(
-          snap.docs.map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<ParentAcknowledgement, 'id'>),
-          }))
-        );
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, `passes/${qrStudent.passToken}/acknowledgements`);
-      }
-    );
-
-    return () => unsub();
-  }, [qrStudent, uid]);
+  const stageNames = useMemo(() => getSchoolStageNames(school), [school]);
 
   const filteredStudents = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -165,7 +148,8 @@ export function StudentsQrTab({
 
   const handleSaveStudent = async (e: React.FormEvent) => {
     e.preventDefault();
-    const targetClass = classrooms.find((c) => c.id === stuClassId);
+    const pool = editingStudent ? allClassrooms : classrooms;
+    const targetClass = pool.find((c) => c.id === stuClassId);
     if (!targetClass || !stuFullName.trim()) return;
 
     setSavingStudent(true);
@@ -229,15 +213,6 @@ export function StudentsQrTab({
       setTimeout(() => setCopiedToken((prev) => (prev === passToken ? null : prev)), 2000);
     } catch {
       onNotify('error', 'تعذر النسخ.');
-    }
-  };
-
-  const handleReviewAck = async (passToken: string, ackId: string) => {
-    try {
-      await markAcknowledgementReviewed(passToken, ackId);
-      onNotify('success', 'تمت المراجعة.');
-    } catch {
-      onNotify('error', 'تعذر التحديث.');
     }
   };
 
@@ -360,26 +335,27 @@ export function StudentsQrTab({
                 >
                   {cls.name} ({count})
                 </button>
-                {confirmDeleteClassId === cls.id ? (
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteClass(cls.id)}
-                    className="px-2 py-1 text-[11px] font-semibold text-white bg-rose-600 rounded-md"
-                  >
-                    حذف
-                  </button>
-                ) : (
-                  count === 0 && (
+                {canDeleteRecords &&
+                  (confirmDeleteClassId === cls.id ? (
                     <button
                       type="button"
-                      onClick={() => setConfirmDeleteClassId(cls.id)}
-                      aria-label="حذف الشعبة"
-                      className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                      onClick={() => handleDeleteClass(cls.id)}
+                      className="px-2 py-1 text-[11px] font-semibold text-white bg-rose-600 rounded-md"
                     >
-                      <X className="w-3.5 h-3.5" />
+                      حذف
                     </button>
-                  )
-                )}
+                  ) : (
+                    count === 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteClassId(cls.id)}
+                        aria-label="حذف الشعبة"
+                        className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )
+                  ))}
               </div>
             );
           })}
@@ -476,33 +452,34 @@ export function StudentsQrTab({
                           <Pencil className="w-4 h-4" />
                         </button>
 
-                        {confirmDeleteStudentId === student.id ? (
-                          <div className="flex items-center gap-1">
+                        {canDeleteRecords &&
+                          (confirmDeleteStudentId === student.id ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteStudent(student)}
+                                className="px-2.5 py-1 text-xs font-semibold text-white bg-rose-600 rounded-md"
+                              >
+                                حذف
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteStudentId(null)}
+                                className="px-2 py-1 text-xs text-slate-500"
+                              >
+                                إلغاء
+                              </button>
+                            </div>
+                          ) : (
                             <button
                               type="button"
-                              onClick={() => handleDeleteStudent(student)}
-                              className="px-2.5 py-1 text-xs font-semibold text-white bg-rose-600 rounded-md"
+                              onClick={() => setConfirmDeleteStudentId(student.id)}
+                              aria-label="حذف"
+                              className="p-2 text-slate-400 hover:text-rose-700 rounded-lg"
                             >
-                              حذف
+                              <Trash2 className="w-4 h-4" />
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteStudentId(null)}
-                              className="px-2 py-1 text-xs text-slate-500"
-                            >
-                              إلغاء
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteStudentId(student.id)}
-                            aria-label="حذف"
-                            className="p-2 text-slate-400 hover:text-rose-700 rounded-lg"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                          ))}
                       </div>
                     </td>
                   </tr>
@@ -595,11 +572,27 @@ export function StudentsQrTab({
                 onChange={(e) => setStuClassId(e.target.value)}
                 className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
               >
-                {classrooms.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
+                {editingStudent
+                  ? STAGE_IDS.map((sid) => {
+                      const stageClasses = allClassrooms.filter(
+                        (c) => resolveClassroomStageId(c) === sid
+                      );
+                      if (stageClasses.length === 0) return null;
+                      return (
+                        <optgroup key={sid} label={stageNames[sid]}>
+                          {stageClasses.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {stageNames[sid]} — {c.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      );
+                    })
+                  : classrooms.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
               </select>
 
               <input
@@ -717,43 +710,6 @@ export function StudentsQrTab({
                   <span>فتح</span>
                 </button>
               </div>
-            </div>
-
-            <div>
-              <h4 className="font-display text-sm font-bold text-slate-900 mb-2.5">
-                ردود ولي الأمر ({studentAcks.length})
-              </h4>
-              {studentAcks.length === 0 ? (
-                <p className="text-xs text-slate-400 py-4 text-center">لا توجد ردود</p>
-              ) : (
-                <div className="divide-y divide-slate-100">
-                  {studentAcks.map((ack) => (
-                    <div
-                      key={ack.id}
-                      className="py-2.5 first:pt-0 last:pb-0 flex items-start justify-between gap-3 text-xs"
-                    >
-                      <div>
-                        <p className="font-semibold text-slate-900">
-                          {ack.type === 'excuse' ? 'عذر غياب' : 'تأكيد اطلاع'} · {ack.senderLabel}
-                        </p>
-                        <p className="text-slate-600 mt-0.5">{ack.message}</p>
-                      </div>
-
-                      {ack.schoolStatus === 'reviewed' ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleReviewAck(qrStudent.passToken, ack.id)}
-                          className="px-2.5 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 rounded-md whitespace-nowrap shrink-0"
-                        >
-                          اعتماد
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
         </div>

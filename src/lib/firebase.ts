@@ -1,10 +1,39 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import {
+  doc,
+  Firestore,
+  getDocFromServer,
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+function createFirestoreInstance(): Firestore {
+  const databaseId = firebaseConfig.firestoreDatabaseId;
+  if (typeof window !== 'undefined') {
+    try {
+      return initializeFirestore(
+        app,
+        {
+          localCache: persistentLocalCache({
+            tabManager: persistentMultipleTabManager(),
+          }),
+        },
+        databaseId
+      );
+    } catch {
+      // Fallback if already initialized or IndexedDB is unavailable in private browsing
+    }
+  }
+  return getFirestore(app, databaseId);
+}
+
+export const db = createFirestoreInstance();
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });

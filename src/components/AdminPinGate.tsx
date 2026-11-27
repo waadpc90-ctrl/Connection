@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, KeyRound, Lock, LogOut, ShieldCheck } from 'lucide-react';
+import { reauthenticateWithPopup } from 'firebase/auth';
+import { ArrowRight, KeyRound, Lock, LogOut, RotateCcw, ShieldCheck } from 'lucide-react';
 import {
+  clearPinLockout,
   isValidAdminPinFormat,
   normalizePinInput,
+  PIN_MAX_ATTEMPTS,
+  readPinLockoutState,
+  recordPinFailure,
   verifyAdminPin,
 } from '../lib/adminSecurity';
+import { auth, googleProvider } from '../lib/firebase';
 import { setSchoolAdminPin } from '../lib/wisaalService';
 
 interface AdminPinGateProps {
@@ -20,9 +26,6 @@ interface AdminPinGateProps {
   onBackToParents: () => void;
   onNotify: (kind: 'success' | 'error', message: string) => void;
 }
-
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_SECONDS = 30;
 
 export function AdminPinGate({
   schoolId,
@@ -41,16 +44,26 @@ export function AdminPinGate({
   const [confirmPin, setConfirmPin] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [failedAttempts, setFailedAttempts] = useState<number>(0);
   const [cooldownLeft, setCooldownLeft] = useState<number>(0);
+  const [resetMode, setResetMode] = useState<boolean>(false);
+  const [reauthing, setReauthing] = useState<boolean>(false);
+
+  // Restore persistent lockout timer on mount / school switch
+  useEffect(() => {
+    const state = readPinLockoutState(schoolId);
+    const remainingSec = Math.max(0, Math.ceil((state.lockedUntilMs - Date.now()) / 1000));
+    setCooldownLeft(remainingSec);
+  }, [schoolId]);
 
   useEffect(() => {
     if (cooldownLeft <= 0) return;
     const timer = window.setInterval(() => {
-      setCooldownLeft((prev) => (prev <= 1 ? 0 : prev - 1));
+      const state = readPinLockoutState(schoolId);
+      const remainingSec = Math.max(0, Math.ceil((state.lockedUntilMs - Date.now()) / 1000));
+      setCooldownLeft(remainingSec);
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [cooldownLeft]);
+  }, [cooldownLeft, schoolId]);
 
   const handleUnlockSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,25 +79,43 @@ export function AdminPinGate({
     try {
       const ok = await verifyAdminPin(normalized, pinHash, pinSalt);
       if (ok) {
+        clearPinLockout(schoolId);
         setPin('');
-        setFailedAttempts(0);
+        setCooldownLeft(0);
         onUnlocked();
       } else {
-        const nextAttempts = failedAttempts + 1;
-        setFailedAttempts(nextAttempts);
         setPin('');
-        if (nextAttempts >= MAX_ATTEMPTS) {
-          setCooldownLeft(LOCKOUT_SECONDS);
-          setFailedAttempts(0);
-          setErrorMsg(`محاولات خاطئة متكررة. انتظر ${LOCKOUT_SECONDS} ثانية.`);
+        const next = recordPinFailure(schoolId);
+        if (next.state.lockedUntilMs > Date.now()) {
+          const secs = Math.max(1, Math.ceil((next.state.lockedUntilMs - Date.now()) / 1000));
+          setCooldownLeft(secs);
+          setErrorMsg(`محاولات خاطئة متكررة. انتظر ${secs} ثانية.`);
         } else {
-          setErrorMsg('الرمز غير صحيح.');
+          const left = Math.max(1, PIN_MAX_ATTEMPTS - next.state.failedAttempts);
+          setErrorMsg(`الرمز غير صحيح (${left} محاولات متبقية).`);
         }
       }
     } catch {
       setErrorMsg('تعذر التحقق من الرمز.');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleStartOwnerReset = async () => {
+    if (!isSchoolOwner || !auth.currentUser) return;
+    setReauthing(true);
+    setErrorMsg(null);
+    try {
+      await reauthenticateWithPopup(auth.currentUser, googleProvider);
+      setPin('');
+      setConfirmPin('');
+      setResetMode(true);
+      onNotify('success', 'تم التحقق من هويتك. يمكنك الآن تعيين رمز جديد.');
+    } catch {
+      setErrorMsg('تعذر إعادة التحقق عبر Google. حاول مرة أخرى.');
+    } finally {
+      setReauthing(false);
     }
   };
 
@@ -106,9 +137,12 @@ export function AdminPinGate({
     setErrorMsg(null);
     try {
       await setSchoolAdminPin(schoolId, first);
+      clearPinLockout(schoolId);
       setPin('');
       setConfirmPin('');
-      onNotify('success', 'تم تفعيل رمز قفل لوحة الإدارة.');
+      setResetMode(false);
+      setCooldownLeft(0);
+      onNotify('success', resetMode ? 'تم إعادة تعيين رمز الإدارة بنجاح.' : 'تم تفعيل رمز قفل لوحة الإدارة.');
       onUnlocked();
     } catch {
       setErrorMsg('تعذر حفظ الرمز. حاول مرة أخرى.');
@@ -148,7 +182,7 @@ export function AdminPinGate({
 
       <main className="flex-1 flex items-center justify-center p-4 sm:p-6">
         <div className="w-full max-w-sm bg-white border border-slate-200/80 rounded-xl p-6 sm:p-8 space-y-6">
-          {hasPinConfigured ? (
+          {hasPinConfigured && !resetMode ? (
             <>
               <div className="text-center space-y-2">
                 <div className="w-11 h-11 rounded-xl bg-emerald-50 border border-emerald-200/70 text-emerald-700 flex items-center justify-center mx-auto">
@@ -203,6 +237,20 @@ export function AdminPinGate({
                   </span>
                 </button>
               </form>
+
+              {isSchoolOwner && (
+                <div className="pt-2 border-t border-slate-100 text-center">
+                  <button
+                    type="button"
+                    disabled={reauthing}
+                    onClick={handleStartOwnerReset}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-emerald-800 disabled:opacity-50"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>{reauthing ? 'جاري التحقق عبر Google...' : 'نسيت الرمز؟ إعادة تعيين'}</span>
+                  </button>
+                </div>
+              )}
             </>
           ) : isSchoolOwner ? (
             <>
@@ -211,7 +259,7 @@ export function AdminPinGate({
                   <KeyRound className="w-5 h-5" />
                 </div>
                 <h1 className="font-display text-xl font-bold text-slate-900">
-                  تعيين رمز قفل الإدارة
+                  {resetMode ? 'إعادة تعيين رمز الإدارة' : 'تعيين رمز قفل الإدارة'}
                 </h1>
                 <p className="text-xs text-slate-500">
                   أنشئ رمزاً سرياً (4 إلى 16 خانة) لقفل لوحة الإدارة
@@ -268,6 +316,21 @@ export function AdminPinGate({
                   <Lock className="w-4 h-4" />
                   <span>{submitting ? 'جاري الحفظ...' : 'حفظ الرمز والدخول'}</span>
                 </button>
+
+                {resetMode && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResetMode(false);
+                      setErrorMsg(null);
+                      setPin('');
+                      setConfirmPin('');
+                    }}
+                    className="w-full py-2 text-xs text-slate-500 hover:text-slate-800"
+                  >
+                    رجوع لإدخال الرمز
+                  </button>
+                )}
               </form>
             </>
           ) : (

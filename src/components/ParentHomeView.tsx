@@ -7,8 +7,10 @@ import {
   QrCode,
   ShieldCheck,
   UserRound,
+  X,
 } from 'lucide-react';
 import { db } from '../lib/firebase';
+import { getSavedChildren, removeSavedChildPass, SavedChildPass } from '../lib/parentStorage';
 import {
   DEFAULT_STAGE_NAMES,
   PublicPortal,
@@ -26,13 +28,6 @@ interface ParentHomeViewProps {
   onOpenDemoPass: () => void;
   onOpenAdmin: () => void;
   onNotify: (kind: 'success' | 'error', message: string) => void;
-}
-
-interface SavedChildPass {
-  passToken: string;
-  studentDisplayName: string;
-  className: string;
-  stageId?: string;
 }
 
 function extractPassToken(rawInput: string): string | null {
@@ -71,23 +66,17 @@ export function ParentHomeView({
 }: ParentHomeViewProps) {
   const [directory, setDirectory] = useState<PublicPortal | null>(null);
   const [loadingDirectory, setLoadingDirectory] = useState<boolean>(true);
-  const [savedChild, setSavedChild] = useState<SavedChildPass | null>(null);
+  const [savedChildren, setSavedChildren] = useState<SavedChildPass[]>([]);
   const [passInput, setPassInput] = useState<string>('');
   const [checkingPass, setCheckingPass] = useState<boolean>(false);
 
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem('wisaal_saved_child_pass');
-      if (raw) {
-        const parsed = JSON.parse(raw) as SavedChildPass;
-        if (parsed?.passToken && parsed?.studentDisplayName) {
-          setSavedChild(parsed);
-        }
-      }
-    } catch {
-      // Ignore storage restrictions
-    }
+    setSavedChildren(getSavedChildren());
   }, []);
+
+  const handleRemoveSavedChild = (passToken: string) => {
+    setSavedChildren(removeSavedChildPass(passToken));
+  };
 
   useEffect(() => {
     let active = true;
@@ -233,28 +222,48 @@ export function ParentHomeView({
             </h2>
           </div>
 
-          {savedChild && (
-            <button
-              type="button"
-              onClick={() => onOpenLivePass(savedChild.passToken)}
-              className="w-full p-4 rounded-lg border border-emerald-200 bg-emerald-50/60 hover:bg-emerald-50 flex items-center justify-between gap-3 text-right transition-colors"
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-9 h-9 rounded-lg bg-emerald-700 text-white flex items-center justify-center shrink-0">
-                  <UserRound className="w-4 h-4" />
+          {savedChildren.length > 0 && (
+            <div className="space-y-2">
+              {savedChildren.map((child) => (
+                <div
+                  key={child.passToken}
+                  className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/60 hover:bg-emerald-50 transition-colors"
+                >
+                  <button
+                    type="button"
+                    onClick={() => onOpenLivePass(child.passToken)}
+                    className="flex-1 min-w-0 p-3.5 flex items-center justify-between gap-3 text-right"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-lg bg-emerald-700 text-white flex items-center justify-center shrink-0">
+                        <UserRound className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-900 truncate">
+                          {child.studentDisplayName}
+                        </p>
+                        <p className="text-xs text-slate-600 truncate">
+                          {child.stageName ? `${child.stageName} · ` : ''}
+                          {child.className}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-800 whitespace-nowrap shrink-0">
+                      <span>عرض البطاقة</span>
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveSavedChild(child.passToken)}
+                    aria-label={`إزالة ${child.studentDisplayName}`}
+                    className="p-2 ml-2 text-slate-400 hover:text-rose-700 hover:bg-white/80 rounded-lg transition-colors shrink-0"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-bold text-slate-900 truncate">
-                    {savedChild.studentDisplayName}
-                  </p>
-                  <p className="text-xs text-slate-600 truncate">{savedChild.className}</p>
-                </div>
-              </div>
-              <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-800 whitespace-nowrap shrink-0">
-                <span>عرض البطاقة</span>
-                <ArrowLeft className="w-3.5 h-3.5" />
-              </span>
-            </button>
+              ))}
+            </div>
           )}
 
           <form onSubmit={handleOpenPassSubmit} className="flex flex-col sm:flex-row gap-2.5">
@@ -276,7 +285,7 @@ export function ParentHomeView({
             </button>
           </form>
 
-          {!savedChild && (
+          {savedChildren.length === 0 && (
             <div className="pt-1 flex justify-end">
               <button
                 type="button"

@@ -17,6 +17,7 @@ import {
   ShieldAlert,
   X,
 } from 'lucide-react';
+import { canManageDestructiveRecords } from '../lib/adminSecurity';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import {
   buildParentsPortalUrl,
@@ -817,7 +818,9 @@ export function SchoolDashboard({
               stageId={activeStageId}
               stageName={activeStageName}
               classrooms={stageClassrooms}
+              allClassrooms={classrooms}
               students={stageStudents}
+              canDeleteRecords={canManageDestructiveRecords(isSchoolOwner, currentStaffMember?.role)}
               onPreviewPass={onPreviewPass}
               onNotify={onNotify}
             />

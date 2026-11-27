@@ -87,6 +87,7 @@ export default function App() {
   });
 
   const [activePassToken, setActivePassToken] = useState<string | null>(null);
+  const [activePassFromAdmin, setActivePassFromAdmin] = useState<boolean>(false);
   const [activeStageToken, setActiveStageToken] = useState<string | null>(null);
   const [previewDemoPass, setPreviewDemoPass] = useState<boolean>(false);
   const [previewDemoStage, setPreviewDemoStage] = useState<{
@@ -199,6 +200,7 @@ export default function App() {
     try {
       await signOut(auth);
       setActivePassToken(null);
+      setActivePassFromAdmin(false);
       setActiveStageToken(null);
       setAppMode('parents');
       const cleanUrl = `${window.location.origin}${window.location.pathname}`;
@@ -220,6 +222,7 @@ export default function App() {
     setUrlPassToken(null);
     setUrlStageToken(null);
     setActivePassToken(null);
+    setActivePassFromAdmin(false);
     setActiveStageToken(null);
     setPreviewDemoPass(false);
     setPreviewDemoStage(null);
@@ -232,6 +235,7 @@ export default function App() {
     setUrlPassToken(null);
     setUrlStageToken(null);
     setActivePassToken(null);
+    setActivePassFromAdmin(false);
     setActiveStageToken(null);
     setPreviewDemoPass(false);
     setPreviewDemoStage(null);
@@ -251,6 +255,7 @@ export default function App() {
     setUrlPassToken(null);
     setUrlStageToken(null);
     setActivePassToken(null);
+    setActivePassFromAdmin(false);
     setActiveStageToken(null);
     setPreviewDemoPass(false);
     setPreviewDemoStage(null);
@@ -263,7 +268,11 @@ export default function App() {
       return (
         <ParentPassView
           passToken={activePassToken}
-          onExit={() => setActivePassToken(null)}
+          isAdminPreview={activePassFromAdmin}
+          onExit={() => {
+            setActivePassToken(null);
+            setActivePassFromAdmin(false);
+          }}
           onNotify={notify}
         />
       );
@@ -276,7 +285,10 @@ export default function App() {
           stageToken={urlStageToken}
           lockedToStage
           onExit={clearUrlTokensToParents}
-          onOpenStudentPass={(pt) => setActivePassToken(pt)}
+          onOpenStudentPass={(pt) => {
+            setActivePassFromAdmin(false);
+            setActivePassToken(pt);
+          }}
           onNotify={notify}
         />
       );
@@ -332,6 +344,7 @@ export default function App() {
           onExit={() => setActiveStageToken(null)}
           onOpenStudentPass={(pt) => {
             setActiveStageToken(null);
+            setActivePassFromAdmin(false);
             setActivePassToken(pt);
           }}
           onNotify={notify}
@@ -348,7 +361,10 @@ export default function App() {
             stageToken={lockedStageToken}
             lockedToStage
             onExit={clearUrlTokensToParents}
-            onOpenStudentPass={(pt) => setActivePassToken(pt)}
+            onOpenStudentPass={(pt) => {
+              setActivePassFromAdmin(false);
+              setActivePassToken(pt);
+            }}
             onNotify={notify}
           />
         );
@@ -360,7 +376,10 @@ export default function App() {
           isAdminSignedIn={Boolean(user)}
           onSelectLiveStage={(token) => setActiveStageToken(token)}
           onSelectDemoStage={(stageId, stageName) => setPreviewDemoStage({ stageId, stageName })}
-          onOpenLivePass={(token) => setActivePassToken(token)}
+          onOpenLivePass={(token) => {
+            setActivePassFromAdmin(false);
+            setActivePassToken(token);
+          }}
           onOpenDemoPass={() => setPreviewDemoPass(true)}
           onOpenAdmin={switchToAdminInterface}
           onNotify={notify}
@@ -386,7 +405,10 @@ export default function App() {
         <SchoolDashboard
           user={user}
           onSignOut={handleSignOut}
-          onPreviewPass={(token) => setActivePassToken(token)}
+          onPreviewPass={(token) => {
+            setActivePassFromAdmin(true);
+            setActivePassToken(token);
+          }}
           onPreviewStagePortal={(token) => setActiveStageToken(token)}
           onOpenParentsPortal={(sid) => switchToParentsInterface(sid)}
           onNotify={notify}

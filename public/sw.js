@@ -1,7 +1,9 @@
-/* Wisaal Service Worker — External Web Push Notifications & Resilient App Shell */
+/* Wisaal Service Worker — External Web Push Notifications & Full Offline App Shell */
 
-const CACHE_NAME = 'wisaal-shell-v2';
+const CACHE_NAME = 'wisaal-shell-v3';
 const RELATIVE_SHELL_ASSETS = [
+  './',
+  'index.html',
   'manifest.webmanifest',
   'icon.svg',
   'pwa-192x192.png',
@@ -16,7 +18,10 @@ function getScopeBase() {
 }
 
 function resolveInScope(relativePath) {
-  const clean = String(relativePath || '').replace(/^\.?\//, '');
+  if (!relativePath || relativePath === './' || relativePath === '/') {
+    return getScopeBase();
+  }
+  const clean = String(relativePath).replace(/^\.?\//, '');
   return new URL(clean, getScopeBase()).href;
 }
 
@@ -25,7 +30,11 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.addAll(RELATIVE_SHELL_ASSETS.map((p) => resolveInScope(p))))
+      .then((cache) =>
+        Promise.allSettled(
+          RELATIVE_SHELL_ASSETS.map((p) => cache.add(resolveInScope(p)))
+        )
+      )
       .catch(() => undefined)
   );
 });
@@ -46,15 +55,51 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  // Never cache backend API routes or cross-origin Firebase/Firestore requests
+  // Never cache backend API routes or cross-origin Firebase/Firestore/CDN requests
   if (url.origin !== self.location.origin || url.pathname.includes('/api/')) {
     return;
   }
 
-  const matchesShell = RELATIVE_SHELL_ASSETS.some((asset) => url.pathname.endsWith(`/${asset}`));
-  if (matchesShell) {
+  // Navigation requests: Network-first with offline fallback to cached app shell
+  if (req.mode === 'navigate') {
     event.respondWith(
-      caches.match(req).then((cached) => cached || fetch(req))
+      fetch(req)
+        .then((response) => {
+          if (response && response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(resolveInScope('index.html'), copy));
+          }
+          return response;
+        })
+        .catch(() =>
+          caches
+            .match(resolveInScope('index.html'))
+            .then((cached) => cached || caches.match(resolveInScope('./')))
+        )
+    );
+    return;
+  }
+
+  // Static same-origin assets (Vite bundles, icons, CSS, fonts, manifest): Stale-while-revalidate
+  const isCacheableStatic =
+    url.pathname.includes('/assets/') ||
+    /\.(?:js|mjs|css|png|jpg|jpeg|webp|svg|ico|woff2?|webmanifest)$/i.test(url.pathname);
+
+  if (isCacheableStatic) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then((cache) =>
+        cache.match(req).then((cached) => {
+          const networkFetch = fetch(req)
+            .then((response) => {
+              if (response && response.ok) {
+                cache.put(req, response.clone());
+              }
+              return response;
+            })
+            .catch(() => cached);
+          return cached || networkFetch;
+        })
+      )
     );
   }
 });

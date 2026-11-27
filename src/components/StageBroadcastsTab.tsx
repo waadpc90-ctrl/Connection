@@ -265,7 +265,13 @@ export function StageBroadcastsTab({
         setTitle('');
         setBody('');
         handleClearAttachedImage();
-        onNotify('success', `تم الإرسال إلى ${selectedStudent.fullName}.`);
+        const pushNote =
+          res.externalPushSent > 0
+            ? ` · ${res.externalPushSent} إشعار خارجي`
+            : res.externalPushAttempted > 0 && !res.externalPushServerReachable
+              ? ' (نُشر على البطاقة؛ خادم الإشعار الخارجي غير متصل)'
+              : '';
+        onNotify('success', `تم الإرسال إلى ${selectedStudent.fullName}${pushNote}.`);
       } else {
         const result = await sendStageCollectiveBroadcast(
           uid,
@@ -285,9 +291,15 @@ export function StageBroadcastsTab({
         setTitle('');
         setBody('');
         handleClearAttachedImage();
+        const pushNote =
+          result.externalPushSent > 0
+            ? ` · ${result.externalPushSent} إشعار خارجي`
+            : result.externalPushAttempted > 0 && !result.externalPushServerReachable
+              ? ' (نُشر على البوابة؛ خادم الإشعار الخارجي غير متصل)'
+              : '';
         onNotify(
           'success',
-          `تم الإرسال إلى ${result.affectedStudentsCount} طالب${result.externalPushSent > 0 ? ` · ${result.externalPushSent} إشعار خارجي` : ''}.`
+          `تم الإرسال إلى ${result.affectedStudentsCount} طالب${pushNote}.`
         );
       }
     } catch {

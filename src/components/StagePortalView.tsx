@@ -17,6 +17,13 @@ import {
 import { clearLockedStageToken } from '../lib/adminSecurity';
 import { db } from '../lib/firebase';
 import {
+  getSavedChildren,
+  getStageReadState,
+  SavedChildPass,
+  saveStageReadState,
+  StageReadState,
+} from '../lib/parentStorage';
+import {
   showSystemNotificationViaSW,
   updateStagePushSectionFilter,
 } from '../lib/pushNotifications';
@@ -38,13 +45,6 @@ interface StagePortalViewProps {
   onExit: () => void;
   onOpenStudentPass: (passToken: string) => void;
   onNotify: (kind: 'success' | 'error', message: string) => void;
-}
-
-interface SavedChildPass {
-  passToken: string;
-  studentDisplayName: string;
-  className: string;
-  stageId?: string;
 }
 
 function playNotificationChime() {
@@ -127,32 +127,30 @@ export function StagePortalView({
   const [notFound, setNotFound] = useState<boolean>(false);
   const [selectedSectionId, setSelectedSectionId] = useState<string>('all');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-  const [lastReadId, setLastReadId] = useState<string>('');
+  const [readState, setReadState] = useState<StageReadState>({ lastReadId: '', lastReadIso: '' });
   const [freshBroadcast, setFreshBroadcast] = useState<StageBroadcastItem | null>(null);
-  const [savedChildPass, setSavedChildPass] = useState<SavedChildPass | null>(null);
+  const [savedChildren, setSavedChildren] = useState<SavedChildPass[]>([]);
   const [showPassLookup, setShowPassLookup] = useState<boolean>(false);
   const [passInput, setPassInput] = useState<string>('');
   const [checkingPass, setCheckingPass] = useState<boolean>(false);
 
   const lastSeenBroadcastIdRef = useRef<string | null>(null);
+  const soundEnabledRef = useRef<boolean>(soundEnabled);
   const storageKeyPrefix = stageToken || demoPortal?.stageToken || 'demo';
+
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
 
   useEffect(() => {
     try {
       const savedSec = window.localStorage.getItem(`wisaal_stage_sec_${storageKeyPrefix}`);
       if (savedSec) setSelectedSectionId(savedSec);
-      const savedRead = window.localStorage.getItem(`wisaal_stage_read_${storageKeyPrefix}`);
-      if (savedRead) setLastReadId(savedRead);
-      const rawChild = window.localStorage.getItem('wisaal_saved_child_pass');
-      if (rawChild) {
-        const parsed = JSON.parse(rawChild) as SavedChildPass;
-        if (parsed?.passToken && parsed?.studentDisplayName) {
-          setSavedChildPass(parsed);
-        }
-      }
     } catch {
       // Ignore storage restrictions
     }
+    setReadState(getStageReadState(storageKeyPrefix));
+    setSavedChildren(getSavedChildren());
   }, [storageKeyPrefix]);
 
   useEffect(() => {
@@ -199,7 +197,7 @@ export function StagePortalView({
           ) {
             setFreshBroadcast(incomingBroadcast);
             onNotify('success', incomingBroadcast.title);
-            if (soundEnabled) {
+            if (soundEnabledRef.current) {
               playNotificationChime();
             }
             if (
@@ -225,7 +223,7 @@ export function StagePortalView({
     );
 
     return () => unsub();
-  }, [stageToken, demoPortal, onNotify, soundEnabled]);
+  }, [stageToken, demoPortal, onNotify]);
 
   const handleSelectSection = (secId: string) => {
     setSelectedSectionId(secId);
@@ -248,23 +246,49 @@ export function StagePortalView({
     );
   }, [portal, selectedSectionId]);
 
-  const unreadCount = useMemo(() => {
-    if (visibleBroadcasts.length === 0) return 0;
-    if (!lastReadId) return visibleBroadcasts.length;
-    const idx = visibleBroadcasts.findIndex((b) => b.id === lastReadId);
-    return idx === -1 ? visibleBroadcasts.length : idx;
-  }, [visibleBroadcasts, lastReadId]);
+  const unreadIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (visibleBroadcasts.length === 0) return ids;
+
+    if (!readState.lastReadId && !readState.lastReadIso) {
+      for (const b of visibleBroadcasts) ids.add(b.id);
+      return ids;
+    }
+
+    if (readState.lastReadId) {
+      const idx = visibleBroadcasts.findIndex((b) => b.id === readState.lastReadId);
+      if (idx !== -1) {
+        for (let i = 0; i < idx; i += 1) {
+          ids.add(visibleBroadcasts[i].id);
+        }
+        return ids;
+      }
+    }
+
+    // Fallback when lastReadId was deleted or belongs to another section filter
+    if (readState.lastReadIso) {
+      for (const b of visibleBroadcasts) {
+        if (b.createdAtIso && b.createdAtIso > readState.lastReadIso) {
+          ids.add(b.id);
+        }
+      }
+    }
+
+    return ids;
+  }, [visibleBroadcasts, readState]);
+
+  const unreadCount = unreadIds.size;
 
   const handleMarkAllRead = () => {
-    const newest = visibleBroadcasts[0]?.id;
+    const newest = visibleBroadcasts[0];
     if (!newest) return;
-    setLastReadId(newest);
+    const nextState: StageReadState = {
+      lastReadId: newest.id,
+      lastReadIso: newest.createdAtIso || new Date().toISOString(),
+    };
+    setReadState(nextState);
     setFreshBroadcast(null);
-    try {
-      window.localStorage.setItem(`wisaal_stage_read_${storageKeyPrefix}`, newest);
-    } catch {
-      // Ignore
-    }
+    saveStageReadState(storageKeyPrefix, nextState.lastReadId, nextState.lastReadIso);
     onNotify('success', 'تم تأكيد الاطلاع.');
   };
 
@@ -334,10 +358,9 @@ export function StagePortalView({
     );
   }
 
-  const matchingSavedChild =
-    savedChildPass && (!savedChildPass.stageId || savedChildPass.stageId === portal.stageId)
-      ? savedChildPass
-      : null;
+  const matchingSavedChildren = savedChildren.filter(
+    (child) => !child.stageId || child.stageId === portal.stageId
+  );
 
   return (
     <div className="min-h-screen bg-[#F7F8F7] text-slate-900 pb-14">
@@ -456,52 +479,52 @@ export function StagePortalView({
           </div>
 
           <div className="pt-3.5 border-t border-slate-100 space-y-2.5">
-            <div className="flex items-center justify-between gap-3">
-              {matchingSavedChild ? (
-                <>
-                  <span className="text-xs text-slate-600 truncate">
-                    <strong className="text-slate-900">
-                      {matchingSavedChild.studentDisplayName}
-                    </strong>{' '}
-                    · {matchingSavedChild.className}
-                  </span>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => onOpenStudentPass(matchingSavedChild.passToken)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>بطاقة الطالب</span>
-                    </button>
-                    {!demoPortal && (
+            {matchingSavedChildren.length > 0 ? (
+              <div className="space-y-2">
+                {matchingSavedChildren.map((child, idx) => (
+                  <div key={child.passToken} className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-slate-600 truncate">
+                      <strong className="text-slate-900">{child.studentDisplayName}</strong> ·{' '}
+                      {child.className}
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
                       <button
                         type="button"
-                        onClick={() => setShowPassLookup((v) => !v)}
-                        aria-label="بطاقة أخرى"
-                        className="p-1.5 text-slate-500 hover:text-slate-900 border border-slate-200 rounded-lg"
+                        onClick={() => onOpenStudentPass(child.passToken)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap"
                       >
-                        <QrCode className="w-3.5 h-3.5" />
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>بطاقة الطالب</span>
                       </button>
-                    )}
+                      {idx === 0 && !demoPortal && (
+                        <button
+                          type="button"
+                          onClick={() => setShowPassLookup((v) => !v)}
+                          aria-label="بطاقة أخرى"
+                          className="p-1.5 text-slate-500 hover:text-slate-900 border border-slate-200 rounded-lg"
+                        >
+                          <QrCode className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </>
-              ) : (
-                <>
-                  <span className="text-xs text-slate-500">الاستعلام عن بطاقة الطالب</span>
-                  {!demoPortal && (
-                    <button
-                      type="button"
-                      onClick={() => setShowPassLookup((v) => !v)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap shrink-0"
-                    >
-                      <QrCode className="w-3.5 h-3.5" />
-                      <span>بطاقة الطالب</span>
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-slate-500">الاستعلام عن بطاقة الطالب</span>
+                {!demoPortal && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPassLookup((v) => !v)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    <span>بطاقة الطالب</span>
+                  </button>
+                )}
+              </div>
+            )}
 
             {showPassLookup && !demoPortal && (
               <form onSubmit={handleStagePassLookup} className="flex items-center gap-2">
@@ -556,12 +579,9 @@ export function StagePortalView({
             </div>
           ) : (
             <div className="divide-y divide-slate-200/80">
-              {visibleBroadcasts.map((item, idx) => {
+              {visibleBroadcasts.map((item) => {
                 const { label, colorClass, Icon } = getKindMeta(item.kind);
-                const isUnread =
-                  !lastReadId || visibleBroadcasts.findIndex((b) => b.id === lastReadId) === -1
-                    ? idx === 0 && !lastReadId
-                    : idx < visibleBroadcasts.findIndex((b) => b.id === lastReadId);
+                const isUnread = unreadIds.has(item.id);
 
                 return (
                   <article

@@ -9,7 +9,6 @@ import {
   subscribeDeviceToExternalPush,
   unsubscribeDeviceFromExternalPush,
 } from '../lib/pushNotifications';
-import { PWAInstallButton } from './PWAInstallButton';
 
 interface ExternalPushBannerProps {
   scope: 'stage' | 'pass';
@@ -132,8 +131,6 @@ export function ExternalPushBanner({
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
-        <PWAInstallButton compact />
-
         {subscribed ? (
           <>
             <button

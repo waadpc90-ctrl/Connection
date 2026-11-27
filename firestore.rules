@@ -76,8 +76,21 @@ service cloud.firestore {
         get(/databases/$(database)/documents/staffMembers/$(request.auth.token.email.lower())).data.ownerId == schoolId;
     }
 
+    function isSchoolSeniorStaff(schoolId) {
+      return isVerified() &&
+        request.auth.token.email is string &&
+        exists(/databases/$(database)/documents/staffMembers/$(request.auth.token.email.lower())) &&
+        get(/databases/$(database)/documents/staffMembers/$(request.auth.token.email.lower())).data.schoolId == schoolId &&
+        get(/databases/$(database)/documents/staffMembers/$(request.auth.token.email.lower())).data.ownerId == schoolId &&
+        get(/databases/$(database)/documents/staffMembers/$(request.auth.token.email.lower())).data.role == 'vice_principal';
+    }
+
     function hasSchoolAccess(schoolId) {
       return isSchoolOwner(schoolId) || isSchoolStaff(schoolId) || isAdmin();
+    }
+
+    function canDeleteSchoolRecords(schoolId) {
+      return isSchoolOwner(schoolId) || isSchoolSeniorStaff(schoolId) || isAdmin();
     }
 
     function isValidDateString(val) {
@@ -591,7 +604,7 @@ service cloud.firestore {
             )
           );
 
-        allow delete: if isVerified() && isValidId(schoolId) && isValidId(classId) && hasSchoolAccess(schoolId);
+        allow delete: if isVerified() && isValidId(schoolId) && isValidId(classId) && canDeleteSchoolRecords(schoolId);
       }
 
       // Students (Private PII)
@@ -630,7 +643,7 @@ service cloud.firestore {
             )
           );
 
-        allow delete: if isVerified() && isValidId(schoolId) && isValidId(studentId) && hasSchoolAccess(schoolId);
+        allow delete: if isVerified() && isValidId(schoolId) && isValidId(studentId) && canDeleteSchoolRecords(schoolId);
       }
 
       // Attendance Logs
@@ -704,7 +717,7 @@ service cloud.firestore {
             (
               hasSchoolAccess(schoolId) &&
               incoming().diff(existing()).affectedKeys().hasOnly([
-                'stageId', 'subject', 'title', 'score', 'maxScore', 'date', 'teacherNote', 'notifiedViaWhatsapp', 'studentName', 'updatedAt'
+                'stageId', 'classId', 'subject', 'title', 'score', 'maxScore', 'date', 'teacherNote', 'notifiedViaWhatsapp', 'studentName', 'updatedAt'
               ])
             )
           );
@@ -749,7 +762,7 @@ service cloud.firestore {
           )
         );
 
-      allow delete: if isVerified() && isValidPassToken(passToken) && hasSchoolAccess(existing().schoolId);
+      allow delete: if isVerified() && isValidPassToken(passToken) && canDeleteSchoolRecords(existing().schoolId);
 
       // Parent Read-Receipts & Absence Excuses
       match /acknowledgements/{ackId} {

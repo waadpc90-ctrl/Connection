@@ -16,7 +16,7 @@ const __dirname = path.dirname(__filename);
 const PORT = 3000;
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_BASE64_LENGTH = 9_500_000; // ~7MB binary image
-const MAX_PUSH_RECIPIENTS = 200;
+const MAX_PUSH_RECIPIENTS = 1000;
 
 // Web Push VAPID setup: prefer configured server-side env secrets; fall back safely to ephemeral keys
 const envVapidPublic = (process.env.VAPID_PUBLIC_KEY || '').trim();
@@ -812,7 +812,7 @@ async function startServer() {
     let failed = 0;
     const expiredEndpoints: string[] = [];
 
-    const CHUNK_SIZE = 20;
+    const CHUNK_SIZE = 25;
     for (let i = 0; i < validSubs.length; i += CHUNK_SIZE) {
       const chunk = validSubs.slice(i, i + CHUNK_SIZE);
       const results = await Promise.allSettled(
@@ -857,6 +857,11 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Wisaal server listening on http://0.0.0.0:${PORT}`);
+    if (!hasPersistentVapid) {
+      console.warn(
+        '[Wisaal Push] Running with ephemeral VAPID keys. Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY in .env so parent Web Push subscriptions survive server restarts.'
+      );
+    }
   });
 }
 
