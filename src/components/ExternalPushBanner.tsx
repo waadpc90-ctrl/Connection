@@ -101,8 +101,8 @@ export function ExternalPushBanner({
     try {
       const targetUrl =
         scope === 'stage'
-          ? `/?stage=${encodeURIComponent(scopeToken)}`
-          : `/?pass=${encodeURIComponent(scopeToken)}`;
+          ? `./?stage=${encodeURIComponent(scopeToken)}`
+          : `./?pass=${encodeURIComponent(scopeToken)}`;
       await sendLocalTestExternalNotification(schoolName, `إشعار تجريبي — ${contextLabel}`, targetUrl);
       onNotify('success', 'تم إرسال إشعار تجريبي.');
     } catch (err) {

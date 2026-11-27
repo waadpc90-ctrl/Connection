@@ -10,6 +10,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { db } from '../lib/firebase';
+import { showSystemNotificationViaSW } from '../lib/pushNotifications';
 import {
   classifyPercentage,
   formatArabicDate,
@@ -71,6 +72,18 @@ export function ParentPassView({
             lastSeenAlertIdRef.current !== nextPass.latestAlert.id
           ) {
             onNotify('success', nextPass.latestAlert.title);
+            if (
+              typeof window !== 'undefined' &&
+              'Notification' in window &&
+              Notification.permission === 'granted'
+            ) {
+              void showSystemNotificationViaSW(
+                `${nextPass.schoolName} — ${nextPass.studentDisplayName}`,
+                `${nextPass.latestAlert.title}: ${nextPass.latestAlert.body}`,
+                `./?pass=${encodeURIComponent(nextPass.passToken)}`,
+                `wisaal-pass-${nextPass.latestAlert.id}`
+              );
+            }
           }
           if (nextPass.latestAlert?.id) {
             lastSeenAlertIdRef.current = nextPass.latestAlert.id;

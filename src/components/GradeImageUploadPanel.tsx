@@ -9,6 +9,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { auth } from '../lib/firebase';
+import { buildApiUrl } from '../lib/pushNotifications';
 import { ExtractedGradeRow, Student } from '../types/wisaal';
 
 interface GradeImageUploadPanelProps {
@@ -107,7 +108,7 @@ export function GradeImageUploadPanel({
         throw new Error('يرجى تسجيل الدخول أولاً.');
       }
 
-      const resp = await fetch('/api/extract-grades', {
+      const resp = await fetch(buildApiUrl('/api/extract-grades'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

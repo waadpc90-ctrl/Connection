@@ -10,6 +10,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { auth } from '../lib/firebase';
+import { buildApiUrl } from '../lib/pushNotifications';
 import { AttendanceStatus, ExtractedAttendanceRow, Student } from '../types/wisaal';
 
 interface AttendanceImageUploadPanelProps {
@@ -113,7 +114,7 @@ export function AttendanceImageUploadPanel({
         throw new Error('يرجى تسجيل الدخول أولاً.');
       }
 
-      const resp = await fetch('/api/extract-attendance', {
+      const resp = await fetch(buildApiUrl('/api/extract-attendance'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

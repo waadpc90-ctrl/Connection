@@ -158,6 +158,32 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '10mb' }));
 
+  const allowedOrigins = new Set(
+    [
+      'https://waadpc90-ctrl.github.io',
+      'http://localhost:3000',
+      'http://localhost:5173',
+      ...(process.env.ALLOWED_ORIGIN ? process.env.ALLOWED_ORIGIN.split(',') : []),
+    ]
+      .map((o) => o.trim())
+      .filter(Boolean)
+  );
+
+  app.use('/api', (req: Request, res: Response, next) => {
+    const origin = req.headers.origin;
+    if (origin && allowedOrigins.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    }
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+
   app.post('/api/extract-grades', async (req: Request, res: Response) => {
     // 1. Verify authenticated Firebase user
     const caller = await verifyFirebaseBearerToken(req);

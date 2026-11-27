@@ -17,13 +17,32 @@ export interface VapidKeyInfo {
   persistentVapid: boolean;
 }
 
+const LOCAL_OS_SUB_MARKER = 'local_os_notifications';
+
+export function getApiBaseUrl(): string {
+  const configured = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
+  return configured;
+}
+
+export function buildApiUrl(path: string): string {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${getApiBaseUrl()}${cleanPath}`;
+}
+
+function getScopedAssetUrl(relativePath: string): string {
+  try {
+    return new URL(relativePath, window.location.href).href;
+  } catch {
+    return relativePath;
+  }
+}
+
 let cachedVapidInfo: VapidKeyInfo | null = null;
 
 export function isExternalPushSupported(): boolean {
   return (
     typeof window !== 'undefined' &&
     'serviceWorker' in navigator &&
-    'PushManager' in window &&
     'Notification' in window
   );
 }
@@ -121,7 +140,7 @@ async function computeSubDocId(endpoint: string): Promise<string> {
 
 export async function registerWisaalServiceWorker(): Promise<ServiceWorkerRegistration> {
   if (!('serviceWorker' in navigator)) {
-    throw new Error('المتصفح لا يدعم خدمة الإشعارات الخلفية.');
+    throw new Error('المتصفح لا يدعم خدمة الإشعارات.');
   }
   const existing = await navigator.serviceWorker.getRegistration('./');
   if (!existing) {
@@ -132,7 +151,7 @@ export async function registerWisaalServiceWorker(): Promise<ServiceWorkerRegist
 
 export async function fetchVapidPublicKey(): Promise<VapidKeyInfo> {
   if (cachedVapidInfo) return cachedVapidInfo;
-  const resp = await fetch('/api/push/public-key', { cache: 'no-store' });
+  const resp = await fetch(buildApiUrl('/api/push/public-key'), { cache: 'no-store' });
   if (!resp.ok) {
     throw new Error('تعذر الاتصال بخادم الإشعارات الخارجية.');
   }
@@ -147,22 +166,54 @@ export async function fetchVapidPublicKey(): Promise<VapidKeyInfo> {
   return cachedVapidInfo;
 }
 
+export async function showSystemNotificationViaSW(
+  title: string,
+  body: string,
+  relativeUrl: string,
+  tag?: string
+): Promise<void> {
+  if (!isExternalPushSupported() || Notification.permission !== 'granted') return;
+  const iconUrl = getScopedAssetUrl('./pwa-192x192.png');
+  const safeTarget = relativeUrl.startsWith('./') || relativeUrl.startsWith('/') ? relativeUrl : './';
+  try {
+    const reg = await registerWisaalServiceWorker();
+    await reg.showNotification(title, {
+      body,
+      icon: iconUrl,
+      badge: iconUrl,
+      dir: 'rtl',
+      lang: 'ar',
+      tag: tag || `wisaal-${Date.now()}`,
+      data: { url: safeTarget },
+    });
+  } catch {
+    try {
+      new Notification(title, { body, icon: iconUrl, dir: 'rtl', lang: 'ar' });
+    } catch {
+      // Ignore notification errors in restricted frames
+    }
+  }
+}
+
 export async function checkActiveExternalSubscription(
   scope: 'stage' | 'pass',
   scopeToken: string
 ): Promise<boolean> {
   if (!isExternalPushSupported()) return false;
   if (Notification.permission !== 'granted') return false;
+  const savedId = getSavedLocalSubId(scope, scopeToken);
+  if (!savedId) return false;
+  if (savedId === LOCAL_OS_SUB_MARKER) {
+    return true;
+  }
   try {
-    const reg = await navigator.serviceWorker.getRegistration('/');
-    if (!reg) return false;
+    const reg = await navigator.serviceWorker.getRegistration('./');
+    if (!reg || !('pushManager' in reg)) return false;
     const sub = await reg.pushManager.getSubscription();
     if (!sub) {
       saveLocalSubId(scope, scopeToken, null);
       return false;
     }
-    const savedId = getSavedLocalSubId(scope, scopeToken);
-    if (!savedId) return false;
     const currentId = await computeSubDocId(sub.endpoint);
     return currentId === savedId;
   } catch {
@@ -178,108 +229,134 @@ export async function subscribeDeviceToExternalPush(params: {
   studentId?: string;
   welcomeTitle?: string;
   welcomeBody?: string;
-}): Promise<{ subId: string }> {
+}): Promise<{ subId: string; mode: 'webpush' | 'local_os' }> {
   if (!isExternalPushSupported()) {
     throw new Error('متصفحك الحالي لا يدعم الإشعارات الخارجية.');
   }
 
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') {
-    throw new Error('يرجى السماح بالإشعارات من إعدادات المتصفح لتلقي التنبيهات الخارجية.');
+    throw new Error('يرجى السماح بالإشعارات من إعدادات المتصفح لتلقي التنبيهات.');
   }
 
-  const [reg, vapid] = await Promise.all([
-    registerWisaalServiceWorker(),
-    fetchVapidPublicKey(),
-  ]);
+  const reg = await registerWisaalServiceWorker();
+  const targetUrl =
+    params.scope === 'stage'
+      ? `./?stage=${encodeURIComponent(params.scopeToken)}`
+      : `./?pass=${encodeURIComponent(params.scopeToken)}`;
+  const iconUrl = getScopedAssetUrl('./pwa-192x192.png');
 
-  const expectedKey = urlBase64ToUint8Array(vapid.publicKey);
-  let subscription = await reg.pushManager.getSubscription();
-
-  // If an existing browser subscription was created with an older VAPID key, rotate it cleanly
-  if (subscription && subscription.options?.applicationServerKey) {
-    const existingKeyB64 = arrayBufferToBase64Url(subscription.options.applicationServerKey);
-    const normalizedExpected = vapid.publicKey.replace(/=+$/, '');
-    if (existingKeyB64 && existingKeyB64 !== normalizedExpected) {
-      await subscription.unsubscribe().catch(() => undefined);
-      subscription = null;
+  // Try full background Web Push (VAPID) if backend push server is reachable
+  let vapid: VapidKeyInfo | null = null;
+  if ('PushManager' in window) {
+    try {
+      vapid = await fetchVapidPublicKey();
+    } catch {
+      vapid = null;
     }
   }
 
-  if (!subscription) {
-    subscription = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: expectedKey,
-    });
+  if (vapid) {
+    const expectedKey = urlBase64ToUint8Array(vapid.publicKey);
+    let subscription = await reg.pushManager.getSubscription();
+
+    // If an existing browser subscription was created with an older VAPID key, rotate it cleanly
+    if (subscription && subscription.options?.applicationServerKey) {
+      const existingKeyB64 = arrayBufferToBase64Url(subscription.options.applicationServerKey);
+      const normalizedExpected = vapid.publicKey.replace(/=+$/, '');
+      if (existingKeyB64 && existingKeyB64 !== normalizedExpected) {
+        await subscription.unsubscribe().catch(() => undefined);
+        subscription = null;
+      }
+    }
+
+    if (!subscription) {
+      subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: expectedKey,
+      });
+    }
+
+    const jsonSub = subscription.toJSON();
+    const endpoint = jsonSub.endpoint || subscription.endpoint;
+    const p256dh = jsonSub.keys?.p256dh || '';
+    const authKey = jsonSub.keys?.auth || '';
+
+    if (!endpoint || !p256dh || !authKey) {
+      throw new Error('تعذر استخراج مفاتيح الاشتراك من المتصفح.');
+    }
+
+    const subId = await computeSubDocId(endpoint);
+    const parentCollection = params.scope === 'stage' ? 'stagePortals' : 'passes';
+    const subRef = doc(db, parentCollection, params.scopeToken, 'pushSubscriptions', subId);
+    const cleanSectionId = (params.sectionId || 'all').trim().slice(0, 128) || 'all';
+    const deviceLabel = detectDeviceLabel();
+
+    const createPayload: Record<string, unknown> = {
+      schoolOwnerId: params.schoolOwnerId,
+      scope: params.scope,
+      sectionId: cleanSectionId,
+      endpoint,
+      p256dh,
+      auth: authKey,
+      deviceLabel,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+    if (params.scope === 'pass' && params.studentId) {
+      createPayload.studentId = params.studentId;
+    }
+
+    const updatePayload: Record<string, unknown> =
+      params.scope === 'stage'
+        ? {
+            sectionId: cleanSectionId,
+            p256dh,
+            auth: authKey,
+            deviceLabel,
+            updatedAt: serverTimestamp(),
+          }
+        : {
+            p256dh,
+            auth: authKey,
+            deviceLabel,
+            updatedAt: serverTimestamp(),
+          };
+
+    try {
+      await setDoc(subRef, createPayload);
+    } catch {
+      await updateDoc(subRef, updatePayload);
+    }
+
+    saveLocalSubId(params.scope, params.scopeToken, subId);
+
+    await reg
+      .showNotification(params.welcomeTitle || 'تم تفعيل الإشعارات الخارجية — وصال', {
+        body:
+          params.welcomeBody ||
+          'ستصلك تنبيهات المدرسة فوراً على جهازك حتى عند إغلاق الموقع.',
+        icon: iconUrl,
+        badge: iconUrl,
+        dir: 'rtl',
+        lang: 'ar',
+        tag: 'wisaal-welcome',
+        data: { url: targetUrl },
+      })
+      .catch(() => undefined);
+
+    return { subId, mode: 'webpush' };
   }
 
-  const jsonSub = subscription.toJSON();
-  const endpoint = jsonSub.endpoint || subscription.endpoint;
-  const p256dh = jsonSub.keys?.p256dh || '';
-  const authKey = jsonSub.keys?.auth || '';
+  // Static hosting fallback (e.g. GitHub Pages without external push relay):
+  // Enable native Service Worker OS notifications directly so Android/Desktop alerts work cleanly
+  saveLocalSubId(params.scope, params.scopeToken, LOCAL_OS_SUB_MARKER);
 
-  if (!endpoint || !p256dh || !authKey) {
-    throw new Error('تعذر استخراج مفاتيح الاشتراك من المتصفح.');
-  }
-
-  const subId = await computeSubDocId(endpoint);
-  const parentCollection = params.scope === 'stage' ? 'stagePortals' : 'passes';
-  const subRef = doc(db, parentCollection, params.scopeToken, 'pushSubscriptions', subId);
-  const cleanSectionId = (params.sectionId || 'all').trim().slice(0, 128) || 'all';
-  const deviceLabel = detectDeviceLabel();
-
-  const createPayload: Record<string, unknown> = {
-    schoolOwnerId: params.schoolOwnerId,
-    scope: params.scope,
-    sectionId: cleanSectionId,
-    endpoint,
-    p256dh,
-    auth: authKey,
-    deviceLabel,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  };
-  if (params.scope === 'pass' && params.studentId) {
-    createPayload.studentId = params.studentId;
-  }
-
-  const updatePayload: Record<string, unknown> =
-    params.scope === 'stage'
-      ? {
-          sectionId: cleanSectionId,
-          p256dh,
-          auth: authKey,
-          deviceLabel,
-          updatedAt: serverTimestamp(),
-        }
-      : {
-          p256dh,
-          auth: authKey,
-          deviceLabel,
-          updatedAt: serverTimestamp(),
-        };
-
-  try {
-    await setDoc(subRef, createPayload);
-  } catch {
-    // If doc already exists for this exact device endpoint, update mutable keys while preserving createdAt
-    await updateDoc(subRef, updatePayload);
-  }
-
-  saveLocalSubId(params.scope, params.scopeToken, subId);
-
-  // Immediately demonstrate a real native OS notification via the active Service Worker
-  const targetUrl =
-    params.scope === 'stage'
-      ? `/?stage=${encodeURIComponent(params.scopeToken)}`
-      : `/?pass=${encodeURIComponent(params.scopeToken)}`;
   await reg
-    .showNotification(params.welcomeTitle || 'تم تفعيل الإشعارات الخارجية — وصال', {
-      body:
-        params.welcomeBody ||
-        'ستصلك تنبيهات المدرسة فوراً على جهازك حتى عند إغلاق الموقع.',
-      icon: '/pwa-192x192.png',
-      badge: '/pwa-192x192.png',
+    .showNotification(params.welcomeTitle || 'تم تفعيل إشعارات الجهاز — وصال', {
+      body: params.welcomeBody || 'ستصلك تنبيهات المدرسة الفورية على جهازك.',
+      icon: iconUrl,
+      badge: iconUrl,
       dir: 'rtl',
       lang: 'ar',
       tag: 'wisaal-welcome',
@@ -287,7 +364,7 @@ export async function subscribeDeviceToExternalPush(params: {
     })
     .catch(() => undefined);
 
-  return { subId };
+  return { subId: LOCAL_OS_SUB_MARKER, mode: 'local_os' };
 }
 
 export async function updateStagePushSectionFilter(
@@ -295,7 +372,7 @@ export async function updateStagePushSectionFilter(
   sectionId: string
 ): Promise<void> {
   const savedSubId = getSavedLocalSubId('stage', stageToken);
-  if (!savedSubId) return;
+  if (!savedSubId || savedSubId === LOCAL_OS_SUB_MARKER) return;
   try {
     const cleanSectionId = (sectionId || 'all').trim().slice(0, 128) || 'all';
     await updateDoc(doc(db, 'stagePortals', stageToken, 'pushSubscriptions', savedSubId), {
@@ -311,11 +388,12 @@ export async function unsubscribeDeviceFromExternalPush(
   scope: 'stage' | 'pass',
   scopeToken: string
 ): Promise<void> {
+  const savedId = getSavedLocalSubId(scope, scopeToken);
   saveLocalSubId(scope, scopeToken, null);
-  if (!isExternalPushSupported()) return;
+  if (!isExternalPushSupported() || savedId === LOCAL_OS_SUB_MARKER) return;
   try {
-    const reg = await navigator.serviceWorker.getRegistration('/');
-    const sub = await reg?.pushManager.getSubscription();
+    const reg = await navigator.serviceWorker.getRegistration('./');
+    const sub = await reg?.pushManager?.getSubscription();
     if (sub) {
       await sub.unsubscribe();
     }
@@ -330,18 +408,9 @@ export async function sendLocalTestExternalNotification(
   relativeUrl: string
 ): Promise<void> {
   if (!isExternalPushSupported() || Notification.permission !== 'granted') {
-    throw new Error('يرجى تفعيل الإشعارات الخارجية أولاً.');
+    throw new Error('يرجى تفعيل الإشعارات أولاً.');
   }
-  const reg = await registerWisaalServiceWorker();
-  await reg.showNotification(title, {
-    body,
-    icon: '/pwa-192x192.png',
-    badge: '/pwa-192x192.png',
-    dir: 'rtl',
-    lang: 'ar',
-    tag: `wisaal-test-${Date.now()}`,
-    data: { url: relativeUrl.startsWith('/') ? relativeUrl : '/' },
-  });
+  await showSystemNotificationViaSW(title, body, relativeUrl, `wisaal-test-${Date.now()}`);
 }
 
 // --- School-Side External Push Dispatch (Authenticated via Firebase Bearer Token) ---
@@ -363,7 +432,7 @@ async function postPushBatchToServer(payload: {
   }
   try {
     const idToken = await currentUser.getIdToken();
-    const resp = await fetch('/api/push/send', {
+    const resp = await fetch(buildApiUrl('/api/push/send'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -440,7 +509,6 @@ export async function dispatchExternalPushForStageBroadcast(params: {
         sub.sectionId === params.targetClassId
     );
 
-    // Also load push subscriptions attached directly to targeted students' individual passes
     const passSubsArrays = await Promise.all(
       params.targetedPassTokens
         .slice(0, 40)
@@ -451,7 +519,6 @@ export async function dispatchExternalPushForStageBroadcast(params: {
     const allRecords = [...matchingStageSubs, ...passSubs];
     if (allRecords.length === 0) return { sent: 0 };
 
-    // Deduplicate by endpoint so a parent subscribed to both stage & child pass gets 1 clean notification
     const seen = new Set<string>();
     const uniqueSubs: Array<{ endpoint: string; p256dh: string; auth: string }> = [];
     for (const r of allRecords) {

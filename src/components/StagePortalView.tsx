@@ -14,7 +14,10 @@ import {
   VolumeX,
 } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { updateStagePushSectionFilter } from '../lib/pushNotifications';
+import {
+  showSystemNotificationViaSW,
+  updateStagePushSectionFilter,
+} from '../lib/pushNotifications';
 import {
   formatArabicDate,
   StageBroadcastItem,
@@ -176,13 +179,12 @@ export function StagePortalView({
               'Notification' in window &&
               Notification.permission === 'granted'
             ) {
-              try {
-                new Notification(`${nextData.schoolName} — ${nextData.stageName}`, {
-                  body: `${incomingBroadcast.title}: ${incomingBroadcast.body}`,
-                });
-              } catch {
-                // Ignore Notification errors
-              }
+              void showSystemNotificationViaSW(
+                `${nextData.schoolName} — ${nextData.stageName}`,
+                `${incomingBroadcast.title}: ${incomingBroadcast.body}`,
+                `./?stage=${encodeURIComponent(nextData.stageToken)}`,
+                `wisaal-stage-${incomingBroadcast.id}`
+              );
             }
           }
           lastSeenBroadcastIdRef.current = incomingBroadcast.id;

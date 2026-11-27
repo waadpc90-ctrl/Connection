@@ -1,20 +1,31 @@
 /* Wisaal Service Worker — External Web Push Notifications & Resilient App Shell */
 
-const CACHE_NAME = 'wisaal-shell-v1';
-const SHELL_ASSETS = [
-  '/manifest.webmanifest',
-  '/icon.svg',
-  '/pwa-192x192.png',
-  '/pwa-512x512.png',
-  '/apple-touch-icon.png',
+const CACHE_NAME = 'wisaal-shell-v2';
+const RELATIVE_SHELL_ASSETS = [
+  'manifest.webmanifest',
+  'icon.svg',
+  'pwa-192x192.png',
+  'pwa-512x512.png',
+  'apple-touch-icon.png',
 ];
+
+function getScopeBase() {
+  return self.registration && self.registration.scope
+    ? self.registration.scope
+    : `${self.location.origin}/`;
+}
+
+function resolveInScope(relativePath) {
+  const clean = String(relativePath || '').replace(/^\.?\//, '');
+  return new URL(clean, getScopeBase()).href;
+}
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.addAll(SHELL_ASSETS))
+      .then((cache) => cache.addAll(RELATIVE_SHELL_ASSETS.map((p) => resolveInScope(p))))
       .catch(() => undefined)
   );
 });
@@ -36,16 +47,15 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
 
   // Never cache backend API routes or cross-origin Firebase/Firestore requests
-  if (url.origin !== self.location.origin || url.pathname.startsWith('/api/')) {
+  if (url.origin !== self.location.origin || url.pathname.includes('/api/')) {
     return;
   }
 
-  // Cache-first for static brand assets & icons
-  if (SHELL_ASSETS.includes(url.pathname)) {
+  const matchesShell = RELATIVE_SHELL_ASSETS.some((asset) => url.pathname.endsWith(`/${asset}`));
+  if (matchesShell) {
     event.respondWith(
       caches.match(req).then((cached) => cached || fetch(req))
     );
-    return;
   }
 });
 
@@ -54,7 +64,7 @@ self.addEventListener('push', (event) => {
   let payload = {
     title: 'إشعار جديد من المدرسة — وصال',
     body: 'اضغط للاطلاع على آخر تحديثات المدرسة.',
-    url: '/',
+    url: './',
     tag: 'wisaal-alert',
     requireInteraction: false,
   };
@@ -66,7 +76,7 @@ self.addEventListener('push', (event) => {
         payload = {
           title: typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title : payload.title,
           body: typeof parsed.body === 'string' && parsed.body.trim() ? parsed.body : payload.body,
-          url: typeof parsed.url === 'string' && parsed.url.startsWith('/') ? parsed.url : '/',
+          url: typeof parsed.url === 'string' && parsed.url.trim() ? parsed.url.trim() : './',
           tag: typeof parsed.tag === 'string' && parsed.tag.trim() ? parsed.tag : payload.tag,
           requireInteraction: Boolean(parsed.requireInteraction),
         };
@@ -79,10 +89,11 @@ self.addEventListener('push', (event) => {
     }
   }
 
+  const iconUrl = resolveInScope('pwa-192x192.png');
   const options = {
     body: payload.body,
-    icon: '/pwa-192x192.png',
-    badge: '/pwa-192x192.png',
+    icon: iconUrl,
+    badge: iconUrl,
     dir: 'rtl',
     lang: 'ar',
     tag: payload.tag,
@@ -102,9 +113,8 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
   const rawTarget =
-    (event.notification && event.notification.data && event.notification.data.url) || '/';
-  const safePath = typeof rawTarget === 'string' && rawTarget.startsWith('/') ? rawTarget : '/';
-  const targetUrl = new URL(safePath, self.location.origin).href;
+    (event.notification && event.notification.data && event.notification.data.url) || './';
+  const targetUrl = resolveInScope(rawTarget);
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
@@ -114,7 +124,7 @@ self.addEventListener('notificationclick', (event) => {
         }
       }
       for (const client of clientList) {
-        if (client.url.startsWith(self.location.origin) && 'navigate' in client && 'focus' in client) {
+        if (client.url.startsWith(getScopeBase()) && 'navigate' in client && 'focus' in client) {
           return client.navigate(targetUrl).then((navigated) => (navigated ? navigated.focus() : client.focus()));
         }
       }
