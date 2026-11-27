@@ -121,6 +121,7 @@ export interface School {
   academicYear: string;
   stageNames?: StageNamesMap;
   stageTokens?: StageTokensMap;
+  subjects?: string[];
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -287,6 +288,7 @@ export const FIELD_LIMITS = {
   maxImageDataUrlChars: 350000,
   maxRecentItems: 40,
   maxSubjects: 25,
+  maxSchoolSubjects: 30,
   maxStageSections: 30,
   maxStageBroadcasts: 40,
 } as const;
@@ -310,6 +312,25 @@ export function getSchoolStageNames(school?: School | null): StageNamesMap {
     stage_2: school?.stageNames?.stage_2 || DEFAULT_STAGE_NAMES.stage_2,
     stage_3: school?.stageNames?.stage_3 || DEFAULT_STAGE_NAMES.stage_3,
   };
+}
+
+export function sanitizeSchoolSubjects(subjects?: string[] | null): string[] {
+  if (!Array.isArray(subjects)) return [...DEFAULT_SUBJECTS];
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const item of subjects) {
+    if (typeof item !== 'string') continue;
+    const trimmed = item.trim().slice(0, FIELD_LIMITS.subject);
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    cleaned.push(trimmed);
+    if (cleaned.length >= FIELD_LIMITS.maxSchoolSubjects) break;
+  }
+  return cleaned.length > 0 ? cleaned : [...DEFAULT_SUBJECTS];
+}
+
+export function getSchoolSubjects(school?: School | null): string[] {
+  return sanitizeSchoolSubjects(school?.subjects);
 }
 
 export function resolveClassroomStageId(cls: Pick<Classroom, 'stageId' | 'stage'>): StageId {

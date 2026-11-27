@@ -79,6 +79,15 @@ service cloud.firestore {
         isValidPassToken(m.stage_3);
     }
 
+    function isValidSubjectsList(items) {
+      return items is list &&
+        items.size() >= 1 &&
+        items.size() <= 30 &&
+        items[0] is string &&
+        items[0].size() >= 1 &&
+        items[0].size() <= 80;
+    }
+
     function isValidLatestAlert(alert) {
       return alert is map &&
         alert.keys().hasAll(['id', 'kind', 'title', 'body', 'createdAtIso']) &&
@@ -169,7 +178,7 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'ownerId', 'name', 'whatsappNumber', 'absenceAlertThreshold',
-          'academicYear', 'stageNames', 'stageTokens', 'createdAt', 'updatedAt'
+          'academicYear', 'stageNames', 'stageTokens', 'subjects', 'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.ownerId) &&
         data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
@@ -178,6 +187,7 @@ service cloud.firestore {
         data.academicYear is string && data.academicYear.size() >= 1 && data.academicYear.size() <= 40 &&
         (!('stageNames' in data) || isValidStageNamesMap(data.stageNames)) &&
         (!('stageTokens' in data) || isValidStageTokensMap(data.stageTokens)) &&
+        (!('subjects' in data) || isValidSubjectsList(data.subjects)) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -418,7 +428,7 @@ service cloud.firestore {
           (
             existing().ownerId == request.auth.uid &&
             incoming().diff(existing()).affectedKeys().hasOnly([
-              'name', 'whatsappNumber', 'absenceAlertThreshold', 'academicYear', 'stageNames', 'stageTokens', 'updatedAt'
+              'name', 'whatsappNumber', 'absenceAlertThreshold', 'academicYear', 'stageNames', 'stageTokens', 'subjects', 'updatedAt'
             ])
           )
         );

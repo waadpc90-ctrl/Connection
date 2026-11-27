@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Save, Sparkles } from 'lucide-react';
+import { Plus, Save, Sparkles, Trash2 } from 'lucide-react';
 import { updateSchoolSettings } from '../lib/wisaalService';
 import {
   Classroom,
+  FIELD_LIMITS,
   getSchoolStageNames,
+  getSchoolSubjects,
   School,
   STAGE_IDS,
   StageNamesMap,
@@ -40,6 +42,8 @@ export function SettingsTab({
   const [academicYear, setAcademicYear] = useState<string>(school.academicYear);
   const [threshold, setThreshold] = useState<number>(school.absenceAlertThreshold);
   const [stageNames, setStageNames] = useState<StageNamesMap>(() => getSchoolStageNames(school));
+  const [subjects, setSubjects] = useState<string[]>(() => getSchoolSubjects(school));
+  const [newSubject, setNewSubject] = useState<string>('');
   const [saving, setSaving] = useState<boolean>(false);
 
   useEffect(() => {
@@ -48,11 +52,37 @@ export function SettingsTab({
     setAcademicYear(school.academicYear);
     setThreshold(school.absenceAlertThreshold);
     setStageNames(getSchoolStageNames(school));
+    setSubjects(getSchoolSubjects(school));
   }, [school]);
+
+  const handleAddSubject = () => {
+    const trimmed = newSubject.trim().slice(0, FIELD_LIMITS.subject);
+    if (!trimmed) return;
+    if (subjects.length >= FIELD_LIMITS.maxSchoolSubjects) {
+      onNotify('error', `الحد الأقصى ${FIELD_LIMITS.maxSchoolSubjects} مادة.`);
+      return;
+    }
+    if (subjects.some((s) => s.trim() === trimmed)) {
+      setNewSubject('');
+      return;
+    }
+    setSubjects((prev) => [...prev, trimmed]);
+    setNewSubject('');
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
+    const pending = newSubject.trim().slice(0, FIELD_LIMITS.subject);
+    const finalSubjects = (pending ? [...subjects, pending] : subjects)
+      .map((s) => s.trim().slice(0, FIELD_LIMITS.subject))
+      .filter(Boolean);
+
+    if (finalSubjects.length === 0) {
+      onNotify('error', 'أضف مادة واحدة على الأقل.');
+      return;
+    }
+
     setSaving(true);
     try {
       await updateSchoolSettings(uid, students, classrooms, {
@@ -61,7 +91,9 @@ export function SettingsTab({
         academicYear,
         absenceAlertThreshold: threshold,
         stageNames,
+        subjects: finalSubjects,
       });
+      setNewSubject('');
       onNotify('success', 'تم حفظ الإعدادات.');
     } catch {
       onNotify('error', 'تعذر الحفظ.');
@@ -153,6 +185,67 @@ export function SettingsTab({
                   />
                 </div>
               ))}
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-slate-100 space-y-3">
+            <p className="text-xs font-semibold text-slate-700">
+              المواد الدراسية ({subjects.length})
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {subjects.map((sub, idx) => (
+                <div key={idx} className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    maxLength={FIELD_LIMITS.subject}
+                    value={sub}
+                    onChange={(e) =>
+                      setSubjects((prev) =>
+                        prev.map((item, i) => (i === idx ? e.target.value : item))
+                      )
+                    }
+                    placeholder="اسم المادة"
+                    className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+                  />
+                  <button
+                    type="button"
+                    disabled={subjects.length <= 1}
+                    onClick={() => setSubjects((prev) => prev.filter((_, i) => i !== idx))}
+                    aria-label="حذف المادة"
+                    className="p-1.5 text-slate-400 hover:text-rose-700 disabled:opacity-30 rounded-lg"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newSubject}
+                maxLength={FIELD_LIMITS.subject}
+                onChange={(e) => setNewSubject(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddSubject();
+                  }
+                }}
+                placeholder="إضافة مادة جديدة..."
+                className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+              />
+              <button
+                type="button"
+                onClick={handleAddSubject}
+                disabled={
+                  !newSubject.trim() || subjects.length >= FIELD_LIMITS.maxSchoolSubjects
+                }
+                className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 disabled:opacity-50 rounded-lg whitespace-nowrap"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>إضافة</span>
+              </button>
             </div>
           </div>
 

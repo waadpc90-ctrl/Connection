@@ -1,17 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BellRing, Camera, ExternalLink, Layers, Save, Table2, Trash2 } from 'lucide-react';
+import {
+  BellRing,
+  Camera,
+  ExternalLink,
+  Layers,
+  Pencil,
+  Plus,
+  Save,
+  Table2,
+  Trash2,
+  X,
+} from 'lucide-react';
 import {
   computePassMetrics,
   deleteGradeEntryAndSyncPass,
   pushInstantSummaryAlertToSection,
   saveClassGradesBatch,
+  updateSchoolSubjects,
 } from '../lib/wisaalService';
 import {
   AttendanceLog,
   classifyPercentage,
   Classroom,
-  DEFAULT_SUBJECTS,
+  FIELD_LIMITS,
   formatArabicDate,
+  getSchoolSubjects,
   getTodayIso,
   GradeEntry,
   School,
@@ -51,13 +64,20 @@ export function GradesTab({
   onPreviewStagePortal,
   onNotify,
 }: GradesTabProps) {
+  const schoolSubjects = useMemo(() => getSchoolSubjects(school), [school]);
+
   const [subMode, setSubMode] = useState<GradeSubMode>('photo');
   const [selectedClassId, setSelectedClassId] = useState<string>(classrooms[0]?.id || '');
-  const [subject, setSubject] = useState<string>(DEFAULT_SUBJECTS[0]);
+  const [subject, setSubject] = useState<string>(() => getSchoolSubjects(school)[0]);
   const [customSubject, setCustomSubject] = useState<string>('');
   const [title, setTitle] = useState<string>('امتحان الشهر الأول');
   const [maxScore, setMaxScore] = useState<number>(100);
   const [date, setDate] = useState<string>(getTodayIso());
+
+  const [editingSubjects, setEditingSubjects] = useState<boolean>(false);
+  const [draftSubjects, setDraftSubjects] = useState<string[]>(() => getSchoolSubjects(school));
+  const [newSubjectName, setNewSubjectName] = useState<string>('');
+  const [savingSubjects, setSavingSubjects] = useState<boolean>(false);
 
   const [scores, setScores] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -76,8 +96,84 @@ export function GradesTab({
     }
   }, [classrooms, selectedClassId]);
 
+  useEffect(() => {
+    if (!schoolSubjects.includes(subject)) {
+      setSubject(schoolSubjects[0]);
+    }
+  }, [schoolSubjects, subject]);
+
+  const subjectOptions = useMemo(() => {
+    const trimmedCustom = customSubject.trim();
+    if (trimmedCustom && !schoolSubjects.includes(trimmedCustom)) {
+      return [trimmedCustom, ...schoolSubjects];
+    }
+    return schoolSubjects;
+  }, [schoolSubjects, customSubject]);
+
   const activeSubject = customSubject.trim() || subject;
   const activeClassroom = classrooms.find((c) => c.id === selectedClassId);
+
+  const handleToggleSubjectsEditor = () => {
+    if (!editingSubjects) {
+      setDraftSubjects([...schoolSubjects]);
+      setNewSubjectName('');
+      setEditingSubjects(true);
+    } else {
+      setEditingSubjects(false);
+    }
+  };
+
+  const handleAddDraftSubject = () => {
+    const trimmed = newSubjectName.trim().slice(0, FIELD_LIMITS.subject);
+    if (!trimmed) return;
+    if (draftSubjects.length >= FIELD_LIMITS.maxSchoolSubjects) {
+      onNotify('error', `الحد الأقصى ${FIELD_LIMITS.maxSchoolSubjects} مادة.`);
+      return;
+    }
+    if (draftSubjects.some((s) => s.trim() === trimmed)) {
+      setNewSubjectName('');
+      return;
+    }
+    setDraftSubjects((prev) => [...prev, trimmed]);
+    setNewSubjectName('');
+  };
+
+  const handleSaveSubjects = async () => {
+    const pending = newSubjectName.trim().slice(0, FIELD_LIMITS.subject);
+    const combined = pending ? [...draftSubjects, pending] : draftSubjects;
+    const validItems = combined
+      .map((s) => s.trim().slice(0, FIELD_LIMITS.subject))
+      .filter(Boolean);
+
+    if (validItems.length === 0) {
+      onNotify('error', 'أضف مادة واحدة على الأقل.');
+      return;
+    }
+
+    const selectedIdx = schoolSubjects.indexOf(subject);
+    setSavingSubjects(true);
+    try {
+      const saved = await updateSchoolSubjects(uid, validItems);
+      const renamedCandidate =
+        selectedIdx >= 0 && draftSubjects[selectedIdx]?.trim()
+          ? draftSubjects[selectedIdx].trim()
+          : '';
+      if (renamedCandidate && saved.includes(renamedCandidate)) {
+        setSubject(renamedCandidate);
+        setCustomSubject('');
+      } else if (!saved.includes(subject)) {
+        setSubject(saved[0]);
+        setCustomSubject('');
+      }
+      setNewSubjectName('');
+      setEditingSubjects(false);
+      onNotify('success', 'تم حفظ المواد.');
+    } catch {
+      onNotify('error', 'تعذر حفظ المواد.');
+    } finally {
+      setSavingSubjects(false);
+    }
+  };
 
   const classStudents = useMemo(
     () =>
@@ -283,50 +379,170 @@ export function GradesTab({
         </div>
 
         {subMode !== 'summary' && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
-            <select
-              value={subject}
-              onChange={(e) => {
-                setSubject(e.target.value);
-                setCustomSubject('');
-              }}
-              aria-label="المادة"
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
-            >
-              {DEFAULT_SUBJECTS.map((sub) => (
-                <option key={sub} value={sub}>
-                  {sub}
-                </option>
-              ))}
-            </select>
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
+              <div className="flex items-center gap-1.5 col-span-2 sm:col-span-1">
+                <select
+                  value={activeSubject}
+                  onChange={(e) => {
+                    const nextVal = e.target.value;
+                    if (schoolSubjects.includes(nextVal)) {
+                      setSubject(nextVal);
+                      setCustomSubject('');
+                    } else {
+                      setCustomSubject(nextVal);
+                    }
+                  }}
+                  aria-label="المادة"
+                  className="w-full min-w-0 px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+                >
+                  {subjectOptions.map((sub) => (
+                    <option key={sub} value={sub}>
+                      {sub}
+                    </option>
+                  ))}
+                </select>
 
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              maxLength={120}
-              placeholder="عنوان الامتحان"
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
-            />
+                <button
+                  type="button"
+                  onClick={handleToggleSubjectsEditor}
+                  aria-label="تعديل المواد"
+                  title="تعديل المواد"
+                  className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-2 text-xs font-medium border rounded-lg transition-colors whitespace-nowrap ${
+                    editingSubjects
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      : 'bg-white text-slate-700 hover:bg-slate-50 border-slate-200'
+                  }`}
+                >
+                  <Pencil className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>تعديل</span>
+                </button>
+              </div>
 
-            <input
-              type="number"
-              min={1}
-              max={1000}
-              value={maxScore}
-              onChange={(e) => setMaxScore(Math.max(1, Number(e.target.value) || 100))}
-              aria-label="الدرجة العظمى"
-              className="w-full px-3 py-2 text-sm font-mono tabular-nums bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
-            />
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={120}
+                placeholder="عنوان الامتحان"
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+              />
 
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              aria-label="التاريخ"
-              className="w-full px-3 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
-            />
-          </div>
+              <input
+                type="number"
+                min={1}
+                max={1000}
+                value={maxScore}
+                onChange={(e) => setMaxScore(Math.max(1, Number(e.target.value) || 100))}
+                aria-label="الدرجة العظمى"
+                className="w-full px-3 py-2 text-sm font-mono tabular-nums bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+              />
+
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                aria-label="التاريخ"
+                className="w-full px-3 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+              />
+            </div>
+
+            {editingSubjects && (
+              <div className="p-4 rounded-xl bg-[#F7F8F7] border border-slate-200/80 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-900">
+                    تعديل المواد ({draftSubjects.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setEditingSubjects(false)}
+                    aria-label="إغلاق"
+                    className="p-1 text-slate-400 hover:text-slate-700 rounded-md"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {draftSubjects.map((subItem, idx) => (
+                    <div key={idx} className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={subItem}
+                        maxLength={FIELD_LIMITS.subject}
+                        onChange={(e) =>
+                          setDraftSubjects((prev) =>
+                            prev.map((item, i) => (i === idx ? e.target.value : item))
+                          )
+                        }
+                        placeholder="اسم المادة"
+                        className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+                      />
+                      <button
+                        type="button"
+                        disabled={draftSubjects.length <= 1}
+                        onClick={() =>
+                          setDraftSubjects((prev) => prev.filter((_, i) => i !== idx))
+                        }
+                        aria-label="حذف المادة"
+                        className="p-1.5 text-slate-400 hover:text-rose-700 disabled:opacity-30 rounded-lg"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={newSubjectName}
+                    maxLength={FIELD_LIMITS.subject}
+                    onChange={(e) => setNewSubjectName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddDraftSubject();
+                      }
+                    }}
+                    placeholder="إضافة مادة جديدة..."
+                    className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddDraftSubject}
+                    disabled={
+                      !newSubjectName.trim() ||
+                      draftSubjects.length >= FIELD_LIMITS.maxSchoolSubjects
+                    }
+                    className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 disabled:opacity-50 rounded-lg whitespace-nowrap"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>إضافة</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-200/70">
+                  <button
+                    type="button"
+                    disabled={savingSubjects}
+                    onClick={handleSaveSubjects}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg whitespace-nowrap"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>{savingSubjects ? 'جاري الحفظ...' : 'حفظ المواد'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingSubjects(false)}
+                    className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 rounded-lg"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -340,7 +556,7 @@ export function GradesTab({
           sectionStudents={classStudents}
           onDetectedMetadata={(meta) => {
             if (meta.subject) {
-              if (DEFAULT_SUBJECTS.includes(meta.subject)) {
+              if (schoolSubjects.includes(meta.subject)) {
                 setSubject(meta.subject);
                 setCustomSubject('');
               } else {

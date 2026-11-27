@@ -12,6 +12,7 @@
         "academicYear": { "type": "string", "minLength": 1, "maxLength": 40 },
         "stageNames": { "type": "object", "description": "Display names for stage_1, stage_2, stage_3" },
         "stageTokens": { "type": "object", "description": "Unguessable QR capability tokens for stage_1, stage_2, stage_3" },
+        "subjects": { "type": "array", "description": "Customizable list of school subjects (1 to 30 items, max 80 chars each)" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },

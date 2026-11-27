@@ -28,6 +28,7 @@ import {
   PassAttendanceItem,
   PassGradeItem,
   resolveClassroomStageId,
+  sanitizeSchoolSubjects,
   School,
   STAGE_IDS,
   StageBroadcastItem,
@@ -873,6 +874,23 @@ export async function sendDirectStudentMessage(
   }
 }
 
+export async function updateSchoolSubjects(
+  uid: string,
+  subjects: string[]
+): Promise<string[]> {
+  const path = `schools/${uid}`;
+  const cleanSubjects = sanitizeSchoolSubjects(subjects);
+  try {
+    await updateDoc(doc(db, 'schools', uid), {
+      subjects: cleanSubjects,
+      updatedAt: serverTimestamp(),
+    });
+    return cleanSubjects;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
 export async function updateSchoolSettings(
   uid: string,
   students: Student[],
@@ -883,6 +901,7 @@ export async function updateSchoolSettings(
     absenceAlertThreshold: number;
     academicYear: string;
     stageNames: StageNamesMap;
+    subjects?: string[];
   }
 ): Promise<void> {
   const path = `schools/${uid}`;
@@ -895,18 +914,24 @@ export async function updateSchoolSettings(
     stage_2: sanitizeText(updates.stageNames.stage_2, FIELD_LIMITS.stage) || DEFAULT_STAGE_NAMES.stage_2,
     stage_3: sanitizeText(updates.stageNames.stage_3, FIELD_LIMITS.stage) || DEFAULT_STAGE_NAMES.stage_3,
   };
+  const cleanSubjects = updates.subjects ? sanitizeSchoolSubjects(updates.subjects) : undefined;
 
   const classStageLookup = new Map(classrooms.map((c) => [c.id, resolveClassroomStageId(c)]));
 
   try {
-    await updateDoc(doc(db, 'schools', uid), {
+    const schoolUpdatePayload: Record<string, unknown> = {
       name: cleanName,
       whatsappNumber: cleanPhone,
       absenceAlertThreshold: cleanThreshold,
       academicYear: cleanYear,
       stageNames: cleanStageNames,
       updatedAt: serverTimestamp(),
-    });
+    };
+    if (cleanSubjects) {
+      schoolUpdatePayload.subjects = cleanSubjects;
+    }
+
+    await updateDoc(doc(db, 'schools', uid), schoolUpdatePayload);
 
     const CHUNK_SIZE = 10;
     for (let i = 0; i < students.length; i += CHUNK_SIZE) {
