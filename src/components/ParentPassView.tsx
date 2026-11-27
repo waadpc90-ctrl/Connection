@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { User } from 'firebase/auth';
-import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import {
   AlertCircle,
   ArrowRight,
@@ -8,17 +7,13 @@ import {
   CheckCircle2,
   Clock,
   Printer,
-  Send,
   ShieldAlert,
 } from 'lucide-react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { submitParentAcknowledgement } from '../lib/wisaalService';
+import { db } from '../lib/firebase';
 import {
   classifyPercentage,
   formatArabicDate,
   getAttendanceMeta,
-  getTodayIso,
-  ParentAcknowledgement,
   StudentPass,
 } from '../types/wisaal';
 import { ExternalPushBanner } from './ExternalPushBanner';
@@ -28,8 +23,6 @@ import { PWAInstallButton } from './PWAInstallButton';
 interface ParentPassViewProps {
   passToken?: string;
   demoPass?: StudentPass;
-  user: User | null;
-  onSignIn: () => void;
   onExit?: () => void;
   onNotify: (kind: 'success' | 'error', message: string) => void;
 }
@@ -37,21 +30,12 @@ interface ParentPassViewProps {
 export function ParentPassView({
   passToken,
   demoPass,
-  user,
-  onSignIn,
   onExit,
   onNotify,
 }: ParentPassViewProps) {
   const [passData, setPassData] = useState<StudentPass | null>(demoPass ?? null);
   const [loading, setLoading] = useState<boolean>(!demoPass);
   const [notFound, setNotFound] = useState<boolean>(false);
-
-  const [acks, setAcks] = useState<ParentAcknowledgement[]>([]);
-  const [ackType, setAckType] = useState<'seen' | 'excuse'>('seen');
-  const [excuseDate, setExcuseDate] = useState<string>(getTodayIso());
-  const [senderLabel, setSenderLabel] = useState<string>('ولي الأمر');
-  const [messageText, setMessageText] = useState<string>('');
-  const [submitting, setSubmitting] = useState<boolean>(false);
 
   const lastSeenAlertIdRef = useRef<string | null>(null);
 
@@ -119,36 +103,6 @@ export function ParentPassView({
     return () => unsub();
   }, [passToken, demoPass, onNotify]);
 
-  useEffect(() => {
-    if (!passData || demoPass || !user) {
-      setAcks([]);
-      return;
-    }
-
-    const isOwner = user.uid === passData.ownerId;
-    const acksCol = collection(db, 'passes', passData.passToken, 'acknowledgements');
-    const q = isOwner
-      ? query(acksCol, where('schoolOwnerId', '==', user.uid))
-      : query(acksCol, where('authorId', '==', user.uid));
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        setAcks(
-          snap.docs.map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<ParentAcknowledgement, 'id'>),
-          }))
-        );
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, `passes/${passData.passToken}/acknowledgements`);
-      }
-    );
-
-    return () => unsub();
-  }, [passData, demoPass, user]);
-
   if (loading) {
     return (
       <div className="min-h-screen bg-[#F7F8F7] py-10 px-4">
@@ -168,7 +122,7 @@ export function ParentPassView({
           <h1 className="font-display text-lg font-bold text-slate-900 mb-2">
             البطاقة غير متوفرة
           </h1>
-          <p className="text-sm text-slate-600 mb-6">تأكد من صحة رابط الطالب.</p>
+          <p className="text-sm text-slate-600 mb-6">تأكد من صحة رابط أو رمز البطاقة.</p>
           {onExit && (
             <button
               type="button"
@@ -176,7 +130,7 @@ export function ParentPassView({
               className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors"
             >
               <ArrowRight className="w-4 h-4" />
-              <span>الرئيسية</span>
+              <span>العودة</span>
             </button>
           )}
         </div>
@@ -188,48 +142,6 @@ export function ParentPassView({
   const needsAttendanceAlert = passData.totalAbsent >= passData.absenceAlertThreshold;
   const subjectSummaries = passData.subjectSummaries || [];
   const overallRating = classifyPercentage(passData.averagePercent);
-
-  const handleSubmitAck = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (demoPass) {
-      const localAck: ParentAcknowledgement = {
-        id: `demo_${Date.now()}`,
-        authorId: 'demo',
-        schoolOwnerId: 'demo',
-        studentId: passData.studentId,
-        type: ackType,
-        targetDate: ackType === 'excuse' ? excuseDate : passData.todayDate,
-        message: messageText.trim() || (ackType === 'seen' ? 'تم الاطلاع.' : 'عذر غياب.'),
-        senderLabel: senderLabel.trim() || 'ولي الأمر',
-        schoolStatus: 'pending',
-      };
-      setAcks((prev) => [localAck, ...prev]);
-      setMessageText('');
-      onNotify('success', 'تم التسجيل.');
-      return;
-    }
-
-    if (!user) {
-      onSignIn();
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      await submitParentAcknowledgement(passData, user.uid, {
-        type: ackType,
-        targetDate: ackType === 'excuse' ? excuseDate : passData.todayDate,
-        message: messageText.trim() || (ackType === 'seen' ? 'تم الاطلاع.' : 'عذر غياب.'),
-        senderLabel: senderLabel.trim() || user.displayName || 'ولي الأمر',
-      });
-      setMessageText('');
-      onNotify('success', ackType === 'excuse' ? 'تم إرسال العذر.' : 'تم تأكيد الاطلاع.');
-    } catch {
-      onNotify('error', 'تعذر الإرسال، حاول مجدداً.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   return (
     <div className="min-h-screen bg-[#F7F8F7] text-slate-900 pb-14">
@@ -413,7 +325,7 @@ export function ParentPassView({
           onNotify={onNotify}
         />
 
-        {/* Subject Summaries */}
+        {/* Subject Summaries (Read-Only Inquiry) */}
         <section className="bg-white border border-slate-200/80 rounded-xl p-5 sm:p-6 print-break-inside-avoid">
           <div className="flex items-center justify-between gap-4 mb-4">
             <h2 className="font-display text-base font-bold text-slate-900">المواد والدرجات</h2>
@@ -467,7 +379,7 @@ export function ParentPassView({
           )}
         </section>
 
-        {/* Attendance Log */}
+        {/* Attendance Log (Read-Only Inquiry) */}
         <section className="bg-white border border-slate-200/80 rounded-xl p-5 sm:p-6 print-break-inside-avoid">
           <div className="flex items-center justify-between gap-4 mb-4">
             <h2 className="font-display text-base font-bold text-slate-900">سجل الحضور</h2>
@@ -509,100 +421,6 @@ export function ParentPassView({
                   </div>
                 );
               })}
-            </div>
-          )}
-        </section>
-
-        {/* Parent Reply / Excuse */}
-        <section className="no-print bg-white border border-slate-200/80 rounded-xl p-5 sm:p-6">
-          <div className="flex items-center justify-between gap-3 mb-4">
-            <h2 className="font-display text-base font-bold text-slate-900">تواصل مع المدرسة</h2>
-            <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
-              <button
-                type="button"
-                onClick={() => setAckType('seen')}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-                  ackType === 'seen' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
-                }`}
-              >
-                تأكيد اطلاع
-              </button>
-              <button
-                type="button"
-                onClick={() => setAckType('excuse')}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-                  ackType === 'excuse' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
-                }`}
-              >
-                عذر غياب
-              </button>
-            </div>
-          </div>
-
-          <form onSubmit={handleSubmitAck} className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <input
-                type="text"
-                value={senderLabel}
-                onChange={(e) => setSenderLabel(e.target.value)}
-                maxLength={80}
-                placeholder="اسم أو صفة المرسل"
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
-              />
-
-              {ackType === 'excuse' && (
-                <input
-                  type="date"
-                  value={excuseDate}
-                  onChange={(e) => setExcuseDate(e.target.value)}
-                  className="w-full px-3 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
-                />
-              )}
-            </div>
-
-            <textarea
-              rows={2}
-              value={messageText}
-              onChange={(e) => setMessageText(e.target.value)}
-              maxLength={400}
-              placeholder={ackType === 'excuse' ? 'سبب الغياب...' : 'ملاحظة اختيارية...'}
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-700"
-            />
-
-            <button
-              type="submit"
-              disabled={submitting}
-              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>
-                {submitting ? 'جاري الإرسال...' : user || demoPass ? 'إرسال' : 'تأكيد عبر Google'}
-              </span>
-            </button>
-          </form>
-
-          {acks.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-slate-100 divide-y divide-slate-100">
-              {acks.map((ack) => (
-                <div
-                  key={ack.id}
-                  className="py-2.5 first:pt-0 last:pb-0 flex items-start justify-between gap-3 text-xs"
-                >
-                  <div>
-                    <p className="font-semibold text-slate-900">
-                      {ack.type === 'excuse' ? 'عذر غياب' : 'تأكيد اطلاع'} · {ack.senderLabel}
-                    </p>
-                    <p className="text-slate-600 mt-0.5">{ack.message}</p>
-                  </div>
-                  <span
-                    className={`font-medium whitespace-nowrap shrink-0 ${
-                      ack.schoolStatus === 'reviewed' ? 'text-emerald-700' : 'text-amber-700'
-                    }`}
-                  >
-                    {ack.schoolStatus === 'reviewed' ? 'تمت المراجعة' : 'قيد المراجعة'}
-                  </span>
-                </div>
-              ))}
             </div>
           )}
         </section>

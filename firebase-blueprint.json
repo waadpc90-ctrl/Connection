@@ -199,6 +199,22 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["schoolOwnerId", "scope", "sectionId", "endpoint", "p256dh", "auth", "deviceLabel", "createdAt", "updatedAt"]
+    },
+    "PublicPortal": {
+      "title": "PublicPortal",
+      "description": "PII-free public directory mapping a school's 3 stages to their stage portal tokens for the Parents Portal.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "schoolId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "schoolName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "academicYear": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "stageNames": { "type": "object", "description": "Display names for stage_1, stage_2, stage_3" },
+        "stageTokens": { "type": "object", "description": "Stage portal tokens for stage_1, stage_2, stage_3" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "schoolId", "schoolName", "academicYear", "stageNames", "stageTokens", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -249,6 +265,10 @@
     "/stagePortals/{stageToken}/pushSubscriptions/{subId}": {
       "schema": { "$ref": "#/entities/PushSubscription" },
       "description": "Web Push subscriptions for parents who scanned a stage QR code to receive external notifications."
+    },
+    "/publicPortals/{portalId}": {
+      "schema": { "$ref": "#/entities/PublicPortal" },
+      "description": "PII-free public directory of school stage names and stage portal tokens for the Parents Portal."
     }
   }
 }

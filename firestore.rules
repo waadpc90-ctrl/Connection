@@ -348,6 +348,25 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    function isValidPublicPortal(data) {
+      return data.keys().hasAll([
+          'ownerId', 'schoolId', 'schoolName', 'academicYear',
+          'stageNames', 'stageTokens', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId', 'schoolId', 'schoolName', 'academicYear',
+          'stageNames', 'stageTokens', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.ownerId) &&
+        isValidId(data.schoolId) &&
+        data.schoolName is string && data.schoolName.size() >= 1 && data.schoolName.size() <= 120 &&
+        data.academicYear is string && data.academicYear.size() >= 1 && data.academicYear.size() <= 40 &&
+        isValidStageNamesMap(data.stageNames) &&
+        isValidStageTokensMap(data.stageTokens) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
     function isValidAck(data) {
       return data.keys().hasAll([
           'authorId', 'schoolOwnerId', 'studentId', 'type', 'targetDate',
@@ -768,6 +787,40 @@ service cloud.firestore {
           existing().schoolOwnerId == request.auth.uid || isAdmin()
         );
       }
+    }
+
+    // 8. PII-Free Public Parents Portal Stage Directory
+    match /publicPortals/{portalId} {
+      allow get: if isValidId(portalId);
+      allow list: if false;
+
+      allow create: if isVerified() &&
+        isValidId(portalId) &&
+        isValidPublicPortal(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        (portalId == incoming().schoolId || portalId == 'primary') &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (isSchoolOwner(incoming().schoolId) || isAdmin());
+
+      allow update: if isVerified() &&
+        isValidId(portalId) &&
+        isValidPublicPortal(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'schoolName', 'academicYear', 'stageNames', 'stageTokens', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isVerified() && isValidId(portalId) && (existing().ownerId == request.auth.uid || isAdmin());
     }
   }
 }

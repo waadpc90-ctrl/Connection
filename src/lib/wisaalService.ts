@@ -83,6 +83,13 @@ export function buildStagePortalUrl(stageToken: string): string {
   return `${base}?stage=${encodeURIComponent(stageToken)}`;
 }
 
+export function buildParentsPortalUrl(schoolId?: string): string {
+  const base = `${window.location.origin}${window.location.pathname}`;
+  return schoolId
+    ? `${base}?parents=1&school=${encodeURIComponent(schoolId)}`
+    : `${base}?parents=1`;
+}
+
 export function normalizeWhatsAppDigits(phone: string): string {
   const western = phone.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
   let digits = western.replace(/\D/g, '');
@@ -465,6 +472,7 @@ export async function ensureSchoolDocument(
         });
       }
       await portalBatch.commit();
+      await syncPublicPortalDirectory(uid, cleanName, cleanYear, defaultStageNames, stageTokens);
       return stageTokens;
     }
 
@@ -564,9 +572,55 @@ export async function syncStagePortalsMetadata(
         });
       }
     }
+    await syncPublicPortalDirectory(uid, cleanName, cleanYear, stageNames, tokens);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, 'stagePortals');
   }
+}
+
+export async function syncPublicPortalDirectory(
+  uid: string,
+  schoolName: string,
+  academicYear: string,
+  stageNames: StageNamesMap,
+  stageTokens: StageTokensMap
+): Promise<void> {
+  const cleanName = sanitizeText(schoolName, FIELD_LIMITS.schoolName) || 'مدرستي';
+  const cleanYear = sanitizeText(academicYear, FIELD_LIMITS.academicYear) || '2026';
+
+  const upsertPortalDoc = async (portalId: string, allowClaimPrimary: boolean) => {
+    try {
+      const ref = doc(db, 'publicPortals', portalId);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        const existingOwner = (snap.data() as { ownerId?: string })?.ownerId;
+        if (existingOwner && existingOwner !== uid) return;
+        await updateDoc(ref, {
+          schoolName: cleanName,
+          academicYear: cleanYear,
+          stageNames,
+          stageTokens,
+          updatedAt: serverTimestamp(),
+        });
+      } else if (allowClaimPrimary || portalId === uid) {
+        await setDoc(ref, {
+          ownerId: uid,
+          schoolId: uid,
+          schoolName: cleanName,
+          academicYear: cleanYear,
+          stageNames,
+          stageTokens,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch {
+      // Non-blocking if another school owns the primary alias
+    }
+  };
+
+  await upsertPortalDoc(uid, false);
+  await upsertPortalDoc('primary', true);
 }
 
 export async function sendStageCollectiveBroadcast(

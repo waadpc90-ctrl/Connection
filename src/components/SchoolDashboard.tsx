@@ -4,6 +4,8 @@ import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import {
   Award,
   ClipboardCheck,
+  Copy,
+  ExternalLink,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -14,6 +16,7 @@ import {
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import {
+  buildParentsPortalUrl,
   ensureSchoolDocument,
   seedDemoSchoolData,
   syncStagePortalsMetadata,
@@ -43,6 +46,7 @@ interface SchoolDashboardProps {
   onSignOut: () => void;
   onPreviewPass: (passToken: string) => void;
   onPreviewStagePortal: (stageToken: string) => void;
+  onOpenParentsPortal: (schoolId: string) => void;
   onNotify: (kind: 'success' | 'error', message: string) => void;
 }
 
@@ -68,6 +72,7 @@ export function SchoolDashboard({
   onSignOut,
   onPreviewPass,
   onPreviewStagePortal,
+  onOpenParentsPortal,
   onNotify,
 }: SchoolDashboardProps) {
   const uid = user.uid;
@@ -325,8 +330,31 @@ export function SchoolDashboard({
           })}
         </nav>
 
-        <div className="p-4 border-t border-slate-200/80">
-          <p className="text-xs font-medium text-slate-700 truncate mb-2.5" dir="ltr">
+        <div className="p-4 border-t border-slate-200/80 space-y-2">
+          <div className="grid grid-cols-2 gap-1.5">
+            <button
+              type="button"
+              onClick={() => onOpenParentsPortal(uid)}
+              className="inline-flex items-center justify-center gap-1 px-2 py-2 text-xs font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+              <span>الأولياء</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard
+                  ?.writeText(buildParentsPortalUrl(uid))
+                  .then(() => onNotify('success', 'تم نسخ رابط بوابة الأولياء.'))
+                  .catch(() => onNotify('error', 'تعذر النسخ.'));
+              }}
+              className="inline-flex items-center justify-center gap-1 px-2 py-2 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <Copy className="w-3.5 h-3.5 shrink-0" />
+              <span>الرابط</span>
+            </button>
+          </div>
+          <p className="text-xs font-medium text-slate-500 truncate pt-1" dir="ltr">
             {user.email}
           </p>
           <button
@@ -375,7 +403,18 @@ export function SchoolDashboard({
                 );
               })}
             </nav>
-            <div className="p-4 border-t border-slate-200">
+            <div className="p-4 border-t border-slate-200 space-y-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  onOpenParentsPortal(uid);
+                }}
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>واجهة أولياء الأمور</span>
+              </button>
               <button
                 type="button"
                 onClick={onSignOut}

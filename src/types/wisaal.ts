@@ -90,6 +90,18 @@ export interface StagePortal {
   updatedAt?: unknown;
 }
 
+export interface PublicPortal {
+  portalId: string;
+  ownerId: string;
+  schoolId: string;
+  schoolName: string;
+  academicYear: string;
+  stageNames: StageNamesMap;
+  stageTokens: StageTokensMap;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
 export interface SubjectSummary {
   subject: string;
   latestScore: number;

@@ -1,15 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
+import {
+  getRedirectResult,
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+  User,
+} from 'firebase/auth';
 import { auth, googleProvider } from './lib/firebase';
 import { DEMO_PARENT_PASS, DEMO_STAGE_PORTAL } from './data/demoPassData';
+import { AdminLoginView } from './components/AdminLoginView';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { LandingView } from './components/LandingView';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { ParentHomeView } from './components/ParentHomeView';
 import { ParentPassView } from './components/ParentPassView';
 import { SchoolDashboard } from './components/SchoolDashboard';
 import { StagePortalView } from './components/StagePortalView';
 import { Toast, ToastState } from './components/Toast';
 import { registerWisaalServiceWorker } from './lib/pushNotifications';
+import { StageId } from './types/wisaal';
 
 function readTokenFromUrl(paramName: 'pass' | 'stage'): string | null {
   const params = new URLSearchParams(window.location.search);
@@ -20,21 +29,45 @@ function readTokenFromUrl(paramName: 'pass' | 'stage'): string | null {
   return null;
 }
 
+function readSchoolParamFromUrl(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  const val = params.get('school');
+  if (val && /^[a-zA-Z0-9_\-]{1,128}$/.test(val)) {
+    return val;
+  }
+  return null;
+}
+
+function readInitialModeFromUrl(): 'parents' | 'admin' {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('admin') === '1') return 'admin';
+  return 'parents';
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [signingIn, setSigningIn] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
+  // Strict separation: default '/' is ALWAYS 'parents' (inquiry only); '?admin=1' is 'admin' (recording)
+  const [appMode, setAppMode] = useState<'parents' | 'admin'>(() =>
+    readInitialModeFromUrl()
+  );
+  const [schoolParam, setSchoolParam] = useState<string | null>(() => readSchoolParamFromUrl());
+
   // Direct parent pass (?pass=...) or collective stage QR portal (?stage=...)
   const [urlPassToken, setUrlPassToken] = useState<string | null>(() => readTokenFromUrl('pass'));
   const [urlStageToken, setUrlStageToken] = useState<string | null>(() =>
     readTokenFromUrl('stage')
   );
-  const [previewPassToken, setPreviewPassToken] = useState<string | null>(null);
-  const [previewStageToken, setPreviewStageToken] = useState<string | null>(null);
+  const [activePassToken, setActivePassToken] = useState<string | null>(null);
+  const [activeStageToken, setActiveStageToken] = useState<string | null>(null);
   const [previewDemoPass, setPreviewDemoPass] = useState<boolean>(false);
-  const [previewDemoStage, setPreviewDemoStage] = useState<boolean>(false);
+  const [previewDemoStage, setPreviewDemoStage] = useState<{
+    stageId: StageId;
+    stageName: string;
+  } | null>(null);
 
   const [toast, setToast] = useState<ToastState | null>(null);
 
@@ -51,8 +84,20 @@ export default function App() {
       setUser(nextUser);
       setAuthReady(true);
     });
+    getRedirectResult(auth)
+      .then((res) => {
+        if (res?.user) {
+          const base = `${window.location.origin}${window.location.pathname}`;
+          window.history.replaceState({}, '', `${base}?admin=1`);
+          setAppMode('admin');
+          notify('success', 'تم تسجيل الدخول بنجاح.');
+        }
+      })
+      .catch(() => {
+        // Ignore redirect result errors when no redirect occurred
+      });
     return () => unsub();
-  }, []);
+  }, [notify]);
 
   // Register Service Worker early so external Web Push & PWA installability are immediately ready
   useEffect(() => {
@@ -67,6 +112,8 @@ export default function App() {
     const handlePop = () => {
       setUrlPassToken(readTokenFromUrl('pass'));
       setUrlStageToken(readTokenFromUrl('stage'));
+      setSchoolParam(readSchoolParamFromUrl());
+      setAppMode(readInitialModeFromUrl());
     };
     window.addEventListener('popstate', handlePop);
     return () => window.removeEventListener('popstate', handlePop);
@@ -77,6 +124,9 @@ export default function App() {
     setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
+      const base = `${window.location.origin}${window.location.pathname}`;
+      window.history.replaceState({}, '', `${base}?admin=1`);
+      setAppMode('admin');
       notify('success', 'تم تسجيل الدخول بنجاح.');
     } catch (err) {
       const code = (err as { code?: string })?.code || '';
@@ -88,6 +138,15 @@ export default function App() {
           `هذا النطاق (${window.location.hostname}) غير مضاف بعد في النطاقات المصرح بها في Firebase Authentication. أضفه من إعدادات Firebase ثم أعد المحاولة.`
         );
       } else if (code === 'auth/popup-blocked' || msg.includes('popup-blocked')) {
+        const isStandaloneWindow = window.self === window.top;
+        if (isStandaloneWindow) {
+          try {
+            await signInWithRedirect(auth, googleProvider);
+            return;
+          } catch {
+            // Fall through to error message below
+          }
+        }
         setAuthError(
           'قام المتصفح بحظر نافذة تسجيل الدخول المنبثقة. اسمح بالنوافذ المنبثقة لهذا الموقع من إعدادات المتصفح ثم أعد المحاولة.'
         );
@@ -106,58 +165,98 @@ export default function App() {
   const handleSignOut = async () => {
     try {
       await signOut(auth);
-      setPreviewPassToken(null);
-      setPreviewStageToken(null);
+      setActivePassToken(null);
+      setActiveStageToken(null);
+      setAppMode('parents');
+      const cleanUrl = `${window.location.origin}${window.location.pathname}`;
+      window.history.replaceState({}, '', cleanUrl);
       notify('success', 'تم تسجيل الخروج بأمان.');
     } catch {
       notify('error', 'تعذر تسجيل الخروج.');
     }
   };
 
-  const clearUrlTokens = () => {
-    const cleanUrl = `${window.location.origin}${window.location.pathname}`;
-    window.history.replaceState({}, '', cleanUrl);
+  const clearUrlTokensToParents = () => {
+    const base = `${window.location.origin}${window.location.pathname}`;
+    const nextUrl = schoolParam ? `${base}?parents=1&school=${encodeURIComponent(schoolParam)}` : base;
+    window.history.replaceState({}, '', nextUrl);
     setUrlPassToken(null);
     setUrlStageToken(null);
+    setActivePassToken(null);
+    setActiveStageToken(null);
+    setPreviewDemoPass(false);
+    setPreviewDemoStage(null);
+    setAppMode('parents');
+  };
+
+  const switchToAdminInterface = () => {
+    const base = `${window.location.origin}${window.location.pathname}`;
+    window.history.replaceState({}, '', `${base}?admin=1`);
+    setUrlPassToken(null);
+    setUrlStageToken(null);
+    setActivePassToken(null);
+    setActiveStageToken(null);
+    setPreviewDemoPass(false);
+    setPreviewDemoStage(null);
+    setAppMode('admin');
+  };
+
+  const switchToParentsInterface = (targetSchoolId?: string) => {
+    const base = `${window.location.origin}${window.location.pathname}`;
+    const nextSchool = targetSchoolId ?? schoolParam;
+    if (targetSchoolId) setSchoolParam(targetSchoolId);
+    const nextUrl = nextSchool
+      ? `${base}?parents=1&school=${encodeURIComponent(nextSchool)}`
+      : `${base}?parents=1`;
+    window.history.replaceState({}, '', nextUrl);
+    setUrlPassToken(null);
+    setUrlStageToken(null);
+    setActivePassToken(null);
+    setActiveStageToken(null);
+    setPreviewDemoPass(false);
+    setPreviewDemoStage(null);
+    setAppMode('parents');
   };
 
   const renderContent = () => {
-    // 1. Direct Stage QR Broadcast Portal via URL (?stage=...) — Zero-Login Instant Notifications
+    // 1. Direct Stage QR Broadcast Portal via URL (?stage=...) — Parents Only
     if (urlStageToken) {
       return (
         <StagePortalView
           stageToken={urlStageToken}
-          onExit={clearUrlTokens}
+          onExit={clearUrlTokensToParents}
           onOpenStudentPass={(pt) => {
-            clearUrlTokens();
-            setPreviewPassToken(pt);
+            setUrlStageToken(null);
+            setActivePassToken(pt);
           }}
           onNotify={notify}
         />
       );
     }
 
-    // 2. Direct Parent Smart Pass via URL (?pass=...) — Instant Zero-Login Access
+    // 2. Direct Parent Smart Pass via URL (?pass=...) — Parents Inquiry Only
     if (urlPassToken) {
       return (
         <ParentPassView
           passToken={urlPassToken}
-          user={user}
-          onSignIn={handleSignIn}
-          onExit={clearUrlTokens}
+          onExit={clearUrlTokensToParents}
           onNotify={notify}
         />
       );
     }
 
-    // 3. Demo Stage QR Portal Preview from Landing Page
+    // 3. Demo Stage Portal selected from Parents Portal
     if (previewDemoStage) {
       return (
         <StagePortalView
-          demoPortal={DEMO_STAGE_PORTAL}
-          onExit={() => setPreviewDemoStage(false)}
+          demoPortal={{
+            ...DEMO_STAGE_PORTAL,
+            stageId: previewDemoStage.stageId,
+            stageName: previewDemoStage.stageName,
+          }}
+          onExit={() => setPreviewDemoStage(null)}
           onOpenStudentPass={() => {
-            setPreviewDemoStage(false);
+            setPreviewDemoStage(null);
             setPreviewDemoPass(true);
           }}
           onNotify={notify}
@@ -165,80 +264,92 @@ export default function App() {
       );
     }
 
-    // 4. Demo Parent Pass Preview from Landing Page
+    // 4. Demo Student Card selected from Parents Portal
     if (previewDemoPass) {
       return (
         <ParentPassView
           demoPass={DEMO_PARENT_PASS}
-          user={user}
-          onSignIn={handleSignIn}
           onExit={() => setPreviewDemoPass(false)}
           onNotify={notify}
         />
       );
     }
 
-    // 5. School Admin Previewing a Stage's Live QR Broadcast Portal
-    if (previewStageToken) {
+    // 5. Live Stage Portal opened from Parents Portal or Admin Preview
+    if (activeStageToken) {
       return (
         <StagePortalView
-          stageToken={previewStageToken}
-          onExit={() => setPreviewStageToken(null)}
+          stageToken={activeStageToken}
+          onExit={() => setActiveStageToken(null)}
           onOpenStudentPass={(pt) => {
-            setPreviewStageToken(null);
-            setPreviewPassToken(pt);
+            setActiveStageToken(null);
+            setActivePassToken(pt);
           }}
           onNotify={notify}
         />
       );
     }
 
-    // 6. School Admin Previewing a Specific Student's Live Pass
-    if (previewPassToken) {
+    // 6. Live Student Card opened from Parents Portal or Admin Preview
+    if (activePassToken) {
       return (
         <ParentPassView
-          passToken={previewPassToken}
-          user={user}
-          onSignIn={handleSignIn}
-          onExit={() => setPreviewPassToken(null)}
+          passToken={activePassToken}
+          onExit={() => setActivePassToken(null)}
           onNotify={notify}
         />
       );
     }
 
-    // 7. Waiting for Firebase Auth initial state
+    // 7. Dedicated Parents Interface (Inquiry Only — Default View at '/')
+    if (appMode === 'parents') {
+      return (
+        <ParentHomeView
+          schoolId={schoolParam}
+          isAdminSignedIn={Boolean(user)}
+          onSelectLiveStage={(token) => setActiveStageToken(token)}
+          onSelectDemoStage={(stageId, stageName) => setPreviewDemoStage({ stageId, stageName })}
+          onOpenLivePass={(token) => setActivePassToken(token)}
+          onOpenDemoPass={() => setPreviewDemoPass(true)}
+          onOpenAdmin={switchToAdminInterface}
+          onNotify={notify}
+        />
+      );
+    }
+
+    // 8. Admin Mode (?admin=1): wait for Firebase Auth state
     if (!authReady) {
       return (
-        <div className="min-h-screen bg-[#F8F9F7] flex items-center justify-center p-6">
+        <div className="min-h-screen bg-[#F7F8F7] flex items-center justify-center p-6">
           <div className="text-center">
             <p className="font-display text-2xl font-bold text-slate-900 mb-2">وصال</p>
-            <p className="text-sm text-slate-500">جاري تجهيز المنصة...</p>
+            <p className="text-sm text-slate-500">جاري التحميل...</p>
           </div>
         </div>
       );
     }
 
-    // 8. Authenticated School Administrator Dashboard
+    // 9. Admin Interface — Authenticated Recording & Management Dashboard
     if (user) {
       return (
         <SchoolDashboard
           user={user}
           onSignOut={handleSignOut}
-          onPreviewPass={(token) => setPreviewPassToken(token)}
-          onPreviewStagePortal={(token) => setPreviewStageToken(token)}
+          onPreviewPass={(token) => setActivePassToken(token)}
+          onPreviewStagePortal={(token) => setActiveStageToken(token)}
+          onOpenParentsPortal={(sid) => switchToParentsInterface(sid)}
           onNotify={notify}
         />
       );
     }
 
-    // 9. Editorial Landing Page
+    // 10. Dedicated Admin Login Screen (?admin=1)
     return (
-      <LandingView
+      <AdminLoginView
         onSignIn={handleSignIn}
         signingIn={signingIn}
-        onPreviewParentPass={() => setPreviewDemoPass(true)}
-        onPreviewStagePortal={() => setPreviewDemoStage(true)}
         authError={authError}
+        onBackToParents={() => switchToParentsInterface()}
       />
     );
   };

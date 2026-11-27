@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ArrowLeft, BellRing, GraduationCap, QrCode } from 'lucide-react';
+import { ArrowLeft, BellRing, GraduationCap, LogIn, QrCode } from 'lucide-react';
+import heroSchoolImage from '../assets/images/hero_wisaal_school_1795623756360.jpg';
 
 interface LandingViewProps {
   onSignIn: () => void;
@@ -8,8 +9,6 @@ interface LandingViewProps {
   onPreviewStagePortal: () => void;
   authError: string | null;
 }
-
-const HERO_IMAGE_PATH = './src/assets/images/hero_wisaal_school_1795623756360.jpg';
 
 export function LandingView({
   onSignIn,
@@ -23,7 +22,7 @@ export function LandingView({
   return (
     <div className="min-h-screen bg-[#F7F8F7] text-slate-900 flex flex-col">
       <header className="sticky top-0 z-30 bg-[#F7F8F7]/95 backdrop-blur-sm border-b border-slate-200/80">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between gap-8">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
           <a
             href="#top"
             className="font-display text-xl font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
@@ -52,15 +51,16 @@ export function LandingView({
             type="button"
             onClick={onSignIn}
             disabled={signingIn}
-            className="px-4 py-2 text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap shrink-0"
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap shrink-0"
           >
-            {signingIn ? 'جاري الدخول...' : 'دخول الإدارة'}
+            <LogIn className="w-4 h-4 shrink-0" />
+            <span>{signingIn ? 'جاري الدخول...' : 'دخول الإدارة'}</span>
           </button>
         </div>
       </header>
 
       <main id="top" className="flex-1 flex items-center">
-        <section className="max-w-6xl w-full mx-auto px-6 py-12 lg:py-16">
+        <section className="max-w-6xl w-full mx-auto px-4 sm:px-6 py-10 lg:py-16">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-stretch">
             <div className="lg:col-span-6 flex flex-col justify-center">
               <h1
@@ -71,8 +71,8 @@ export function LandingView({
               </h1>
 
               <p className="text-base text-slate-600 leading-relaxed max-w-lg mb-8">
-                إدارة المراحل الثلاث، قراءة كشوف الدرجات بالصورة، وإرسال التبليغات لأولياء الأمور
-                عبر الباركود.
+                إدارة المراحل الثلاث، قراءة كشوف الدرجات والغياب بالصورة، وإرسال التبليغات لأولياء
+                الأمور عبر الباركود.
               </p>
 
               {authError && (
@@ -88,7 +88,8 @@ export function LandingView({
                   disabled={signingIn}
                   className="inline-flex items-center justify-center gap-2.5 px-6 py-3 text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap shrink-0"
                 >
-                  <span>{signingIn ? 'جاري تسجيل الدخول...' : 'الدخول بحساب Google'}</span>
+                  <LogIn className="w-4 h-4" />
+                  <span>{signingIn ? 'جاري تسجيل الدخول...' : 'دخول الإدارة بحساب Google'}</span>
                   <ArrowLeft className="w-4 h-4" />
                 </button>
 
@@ -122,23 +123,23 @@ export function LandingView({
                 </div>
                 <div>
                   <p className="font-mono tabular-nums text-lg font-bold text-slate-900">بالصورة</p>
-                  <p className="text-xs text-slate-500 mt-0.5">رصد درجات الشعبة</p>
+                  <p className="text-xs text-slate-500 mt-0.5">رصد الغياب والدرجات</p>
                 </div>
               </div>
             </div>
 
             <div className="lg:col-span-6">
-              <div className="relative h-full min-h-[300px] lg:min-h-[420px] rounded-xl overflow-hidden border border-slate-200/80 bg-slate-100">
+              <div className="relative h-full min-h-[280px] lg:min-h-[420px] rounded-xl overflow-hidden border border-slate-200/80 bg-slate-100">
                 {!imgFailed ? (
                   <img
-                    src={HERO_IMAGE_PATH}
+                    src={heroSchoolImage}
                     alt="قاعة دراسية منظمة"
                     referrerPolicy="no-referrer"
                     onError={() => setImgFailed(true)}
                     className="w-full h-full object-cover"
                   />
                 ) : (
-                  <div className="w-full h-full min-h-[300px] bg-gradient-to-br from-emerald-50 via-stone-50 to-slate-100 flex flex-col items-center justify-center p-8 text-center">
+                  <div className="w-full h-full min-h-[280px] bg-gradient-to-br from-emerald-50 via-stone-50 to-slate-100 flex flex-col items-center justify-center p-8 text-center">
                     <GraduationCap className="w-12 h-12 text-emerald-700 mb-3" />
                     <p className="font-display text-lg font-semibold text-slate-800">وصال</p>
                   </div>
