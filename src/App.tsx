@@ -16,6 +16,7 @@ import {
 import { DEMO_PARENT_PASS, DEMO_STAGE_PORTAL } from './data/demoPassData';
 import { AdminLoginView } from './components/AdminLoginView';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { FirstVisitInstallGuide } from './components/FirstVisitInstallGuide';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { ParentHomeView } from './components/ParentHomeView';
 import { ParentPassView } from './components/ParentPassView';
@@ -407,6 +408,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       {renderContent()}
+      <FirstVisitInstallGuide onNotify={notify} />
       <Toast toast={toast} onDismiss={() => setToast(null)} />
       <OfflineIndicator />
     </ErrorBoundary>
