@@ -635,15 +635,12 @@ async function startServer() {
 
     try {
       const promptText = [
-        'أنت خبير دقيق في قراءة قوائم وكشوف أسماء الطلاب المدرسية العربية (المطبوعة أو المكتوبة بخط اليد أو لقطات شاشة إكسل وواتساب).',
-        'استخرج جميع أسماء الطلاب الموجودة في الصورة بدقة وبالترتيب.',
+        'أنت خبير دقيق في قراءة كشوف وقوائم أسماء الطلاب المدرسية العربية (المطبوعة أو المكتوبة بخط اليد أو لقطات شاشة إكسل).',
+        'استخرج أسماء الطلاب العربية فقط بالترتيب وتجاهل تماماً كل النصوص الأخرى.',
         'التعليمات الصارمة:',
-        '1. ضع اسم الطالب الكامل في fullName بدون أرقام التسلسل (مثل 1 أو ١- أو ت) وبدون عناوين الأعمدة مثل "الاسم" أو "التسلسل" أو "الملاحظات".',
-        '2. إذا وُجد رمز/رقم امتحاني أو رقم قيد واضح للطالب فضعه في studentCode، وإلا أعد "".',
-        '3. إذا وُجد عمود منفصل لاسم ولي الأمر فضعه في parentName، وإلا أعد "".',
-        '4. إذا وُجد رقم هاتف/جوال في نفس صف الطالب فضعه في parentPhone بالأرقام الإنجليزية القياسية (0-9)، وإلا أعد "".',
-        '5. حوّل جميع الأرقام العربية الشرقية (٠١٢٣٤٥٦٧٨٩) إلى أرقام قياسية (0-9).',
-        '6. تجاهل الترويسات والتواقيع والأختام وأسماء المعلمين أو المدرسة.',
+        '1. أعد في fullName اسم الطالب العربي الكامل فقط (ثنائي أو ثلاثي أو رباعي) بحروف عربية نظيفة بدون أي أرقام أو رموز أو علامات ترقيم أو حروف إنجليزية.',
+        '2. تجاهل تماماً: أرقام التسلسل، عناوين الأعمدة (مثل التسلسل/الاسم/الملاحظات/الدرجة)، اسم المدرسة، اسم المرحلة، الشعبة، المادة، التواريخ، الدرجات، التواقيع، وأسماء المعلمين.',
+        '3. اترك studentCode و parentName و parentPhone فارغة "" ما لم تكن ضرورية؛ الأولوية القصوى لاستخراج أسماء الطلاب العربية النظيفة فقط.',
       ].join('\n');
 
       const response = await ai.models.generateContent({
@@ -691,25 +688,15 @@ async function startServer() {
             .slice(0, 150)
             .map((item) => {
               const r = (item ?? {}) as Record<string, unknown>;
-              const fullName =
-                typeof r.fullName === 'string'
-                  ? r.fullName.replace(/\s+/g, ' ').trim().slice(0, 100)
-                  : '';
-              const studentCode =
-                typeof r.studentCode === 'string'
-                  ? r.studentCode.replace(/\s+/g, ' ').trim().slice(0, 32)
-                  : '';
-              const parentName =
-                typeof r.parentName === 'string'
-                  ? r.parentName.replace(/\s+/g, ' ').trim().slice(0, 100)
-                  : '';
-              const parentPhone =
-                typeof r.parentPhone === 'string'
-                  ? r.parentPhone.replace(/[^0-9+\-\s]/g, '').trim().slice(0, 24)
-                  : '';
-              return { fullName, studentCode, parentName, parentPhone };
+              const rawName = typeof r.fullName === 'string' ? r.fullName.normalize('NFKC') : '';
+              const fullName = rawName
+                .replace(/[^\u0621-\u063A\u0641-\u064A\s]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 100);
+              return { fullName, studentCode: '', parentName: '', parentPhone: '' };
             })
-            .filter((r) => r.fullName.length >= 2)
+            .filter((r) => r.fullName.split(' ').filter((w) => w.length >= 2).length >= 2)
         : [];
 
       res.json({ rows: cleanRows });

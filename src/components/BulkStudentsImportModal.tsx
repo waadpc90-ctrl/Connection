@@ -4,15 +4,18 @@ import {
   Camera,
   Check,
   ClipboardPaste,
+  Crop,
   ImagePlus,
   Loader2,
   Plus,
+  RefreshCw,
   Trash2,
   Users,
   X,
 } from 'lucide-react';
 import { auth } from '../lib/firebase';
 import {
+  CropBoundsRatio,
   extractStudentsLocallyFromImage,
   normalizeArabicForMatch,
   parseStudentsFromText,
@@ -43,12 +46,9 @@ interface DraftStudentRow {
 
 type ImportMode = 'paste' | 'image';
 
-function normalizeNameForCompare(name: string): string {
-  return normalizeArabicForMatch(name);
-}
-
-async function compressRosterImageToBase64(
-  file: File
+async function compressCroppedImageForApi(
+  file: File,
+  crop?: CropBoundsRatio
 ): Promise<{ base64: string; mimeType: string; previewUrl: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -57,9 +57,14 @@ async function compressRosterImageToBase64(
       const img = new Image();
       img.onerror = () => reject(new Error('الصورة غير صالحة.'));
       img.onload = () => {
-        const maxDim = 1600;
-        let width = img.width;
-        let height = img.height;
+        const sx = Math.round((crop?.left ?? 0) * img.width);
+        const sy = Math.round((crop?.top ?? 0) * img.height);
+        const sw = Math.max(20, Math.round(((crop?.right ?? 1) - (crop?.left ?? 0)) * img.width));
+        const sh = Math.max(20, Math.round(((crop?.bottom ?? 1) - (crop?.top ?? 0)) * img.height));
+
+        const maxDim = 2000;
+        let width = sw;
+        let height = sh;
         if (width > maxDim || height > maxDim) {
           if (width >= height) {
             height = Math.round((height * maxDim) / width);
@@ -77,8 +82,8 @@ async function compressRosterImageToBase64(
           reject(new Error('تعذر معالجة الصورة.'));
           return;
         }
-        ctx.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.86);
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
         const commaIdx = dataUrl.indexOf(',');
         const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
         resolve({ base64, mimeType: 'image/jpeg', previewUrl: dataUrl });
@@ -104,7 +109,11 @@ export function BulkStudentsImportModal({
   );
   const [mode, setMode] = useState<ImportMode>('paste');
   const [pasteText, setPasteText] = useState<string>('');
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fullPreviewUrl, setFullPreviewUrl] = useState<string | null>(null);
+  const [showCropTools, setShowCropTools] = useState<boolean>(false);
+  const [cropLeftPct, setCropLeftPct] = useState<number>(0);
+  const [cropRightPct, setCropRightPct] = useState<number>(100);
   const [extracting, setExtracting] = useState<boolean>(false);
   const [ocrProgress, setOcrProgress] = useState<number | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
@@ -118,7 +127,7 @@ export function BulkStudentsImportModal({
     const set = new Set<string>();
     for (const s of existingStudents) {
       if (s.classId === targetClassId) {
-        set.add(normalizeNameForCompare(s.fullName));
+        set.add(normalizeArabicForMatch(s.fullName));
       }
     }
     return set;
@@ -134,7 +143,7 @@ export function BulkStudentsImportModal({
   ) => {
     const seenInBatch = new Set<string>();
     const nextRows: DraftStudentRow[] = items.map((item, idx) => {
-      const norm = normalizeNameForCompare(item.fullName);
+      const norm = normalizeArabicForMatch(item.fullName);
       const isDuplicate = existingNamesInTargetClass.has(norm) || seenInBatch.has(norm);
       seenInBatch.add(norm);
       return {
@@ -151,28 +160,21 @@ export function BulkStudentsImportModal({
 
   const handleParseText = () => {
     setErrorMsg(null);
-    const parsed = parseStudentsFromText(pasteText, false);
+    // Strict Arabic student names-only filter
+    const parsed = parseStudentsFromText(pasteText, true);
     if (parsed.length === 0) {
-      setErrorMsg('لم يتم العثور على أسماء صالحة في النص الملصوق.');
+      setErrorMsg('لم يتم العثور على أسماء عربية صالحة (ثنائية أو ثلاثية) في النص.');
       return;
     }
     populateDraftRows(parsed);
   };
 
-  const handleImageSelected = async (file: File | undefined) => {
-    if (!file) return;
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      setErrorMsg('اختر صورة بصيغة JPG أو PNG أو WebP.');
-      return;
-    }
-
+  const runExtractionOnFile = async (file: File, crop?: CropBoundsRatio) => {
     setErrorMsg(null);
     setOcrProgress(null);
     setExtracting(true);
     try {
-      const { base64, mimeType, previewUrl: compressed } = await compressRosterImageToBase64(file);
-      setPreviewUrl(compressed);
-
+      const { base64, mimeType } = await compressCroppedImageForApi(file, crop);
       const idToken = await auth.currentUser?.getIdToken();
       if (!idToken) {
         throw new Error('يرجى تسجيل الدخول أولاً.');
@@ -201,22 +203,30 @@ export function BulkStudentsImportModal({
       }> = [];
 
       if (attempt.kind === 'ok') {
-        extracted = Array.isArray(attempt.data.rows) ? attempt.data.rows : [];
+        const serverRows = Array.isArray(attempt.data.rows) ? attempt.data.rows : [];
+        // Keep strictly clean Arabic student names
+        const joinedNames = serverRows.map((r) => r.fullName).join('\n');
+        extracted = parseStudentsFromText(joinedNames, true);
       } else if (attempt.kind === 'api_error') {
         throw new Error(attempt.message);
       } else {
-        // Static hosting (e.g. GitHub Pages PWA): run on-device Arabic OCR directly in browser
+        // Static hosting (GitHub Pages / Android PWA): run pure high-accuracy Arabic OCR on original full-res file
         setOcrProgress(5);
-        extracted = await extractStudentsLocallyFromImage(compressed, (pct) => {
-          setOcrProgress(pct);
+        extracted = await extractStudentsLocallyFromImage(file, {
+          crop,
+          namesOnly: true,
+          onProgress: (pct) => setOcrProgress(pct),
         });
       }
 
       if (extracted.length === 0) {
-        setErrorMsg('لم تظهر أسماء طلاب واضحة في الصورة. جرّب صورة أقرب وأوضح أو استخدم النسخ واللصق.');
+        setShowCropTools(true);
+        setErrorMsg(
+          'لم تظهر أسماء عربية واضحة. استخدم زر «تحديد عمود الأسماء» لقص عمود الأسماء فقط ثم أعد القراءة.'
+        );
       } else {
         populateDraftRows(extracted);
-        onNotify('success', `تم استخراج ${extracted.length} اسماً من الصورة.`);
+        onNotify('success', `تمت تصفية واستخراج ${extracted.length} اسماً عربياً.`);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'تعذر قراءة الصورة.';
@@ -225,9 +235,41 @@ export function BulkStudentsImportModal({
     } finally {
       setExtracting(false);
       setOcrProgress(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      if (cameraInputRef.current) cameraInputRef.current.value = '';
     }
+  };
+
+  const handleImageSelected = async (file: File | undefined) => {
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setErrorMsg('اختر صورة بصيغة JPG أو PNG أو WebP.');
+      return;
+    }
+
+    setSelectedFile(file);
+    setCropLeftPct(0);
+    setCropRightPct(100);
+    setShowCropTools(false);
+
+    const previewReader = new FileReader();
+    previewReader.onload = () => setFullPreviewUrl(String(previewReader.result || ''));
+    previewReader.readAsDataURL(file);
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+
+    await runExtractionOnFile(file);
+  };
+
+  const handleReExtractCropped = async () => {
+    if (!selectedFile) return;
+    const left = Math.min(cropLeftPct, cropRightPct - 10) / 100;
+    const right = Math.max(cropRightPct, cropLeftPct + 10) / 100;
+    await runExtractionOnFile(selectedFile, {
+      left: Math.max(0, left),
+      right: Math.min(1, right),
+      top: 0,
+      bottom: 1,
+    });
   };
 
   const updateRow = (rowKey: string, patch: Partial<DraftStudentRow>) => {
@@ -378,7 +420,7 @@ export function BulkStudentsImportModal({
                 rows={5}
                 value={pasteText}
                 onChange={(e) => setPasteText(e.target.value)}
-                placeholder={'ألصق الأسماء هنا (اسم في كل سطر)\nمثال:\n1. أحمد علي محمد\n2. زينب حسن كريم 07701234567\n3. مصطفى سعد عباس'}
+                placeholder={'ألصق القائمة هنا وسيتم تصفية الأسماء العربية فقط تلقائياً\n(تحذف الأرقام والدرجات والرموز والعناوين)'}
                 className="w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-700 leading-relaxed resize-y"
               />
               <div className="flex items-center justify-end gap-2">
@@ -402,12 +444,12 @@ export function BulkStudentsImportModal({
                   className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-45 rounded-lg"
                 >
                   <ClipboardPaste className="w-3.5 h-3.5" />
-                  <span>تجهيز القائمة</span>
+                  <span>تصفية واستخراج الأسماء</span>
                 </button>
               </div>
             </div>
           ) : (
-            /* Mode: Image Upload / Camera */
+            /* Mode: Image Upload / Camera + Column Cropper */
             <div className="space-y-3">
               <input
                 ref={fileInputRef}
@@ -425,55 +467,157 @@ export function BulkStudentsImportModal({
                 onChange={(e) => void handleImageSelected(e.target.files?.[0])}
               />
 
-              <div className="border border-dashed border-slate-300 rounded-xl p-4 bg-slate-50/70 flex flex-col sm:flex-row items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  {previewUrl ? (
-                    <img
-                      src={previewUrl}
-                      alt="معاينة الكشف"
-                      className="w-14 h-14 rounded-lg object-cover border border-slate-200 shrink-0"
-                    />
-                  ) : (
-                    <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
-                      <ImagePlus className="w-5 h-5" />
+              <div className="border border-dashed border-slate-300 rounded-xl p-4 bg-slate-50/70 space-y-3">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {fullPreviewUrl ? (
+                      <img
+                        src={fullPreviewUrl}
+                        alt="معاينة الكشف"
+                        className="w-14 h-14 rounded-lg object-cover border border-slate-200 shrink-0"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
+                        <ImagePlus className="w-5 h-5" />
+                      </div>
+                    )}
+                    <div className="text-right">
+                      <p className="text-xs font-semibold text-slate-800">
+                        استخراج الأسماء العربية فقط من الصورة
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        يصفّي الأرقام والعناوين ويبقي الأسماء فقط
+                      </p>
                     </div>
-                  )}
-                  <div className="text-right">
-                    <p className="text-xs font-semibold text-slate-800">صورة كشف أو قائمة الأسماء</p>
-                    <p className="text-[11px] text-slate-500 mt-0.5">مطبوعة أو بخط اليد أو لقطة شاشة</p>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={extracting}
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 disabled:opacity-50 rounded-lg"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>كاميرا</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={extracting}
+                      onClick={() => fileInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded-lg"
+                    >
+                      {extracting ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <ImagePlus className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {extracting
+                          ? ocrProgress !== null
+                            ? `جاري القراءة ${ocrProgress}%`
+                            : 'جاري القراءة...'
+                          : 'اختيار صورة'}
+                      </span>
+                    </button>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    disabled={extracting}
-                    onClick={() => cameraInputRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 disabled:opacity-50 rounded-lg"
-                  >
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>كاميرا</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={extracting}
-                    onClick={() => fileInputRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded-lg"
-                  >
-                    {extracting ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <ImagePlus className="w-3.5 h-3.5" />
+                {/* Column Focus / Cropper for Dense Multi-Column Sheets */}
+                {selectedFile && fullPreviewUrl && (
+                  <div className="pt-2 border-t border-slate-200/80 space-y-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowCropTools((v) => !v)}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 hover:text-emerald-950"
+                    >
+                      <Crop className="w-3.5 h-3.5" />
+                      <span>
+                        {showCropTools ? 'إخفاء تحديد عمود الأسماء' : 'تحديد عمود الأسماء فقط (للكشوف متعددة الأعمدة)'}
+                      </span>
+                    </button>
+
+                    {showCropTools && (
+                      <div className="space-y-3 bg-white p-3 rounded-xl border border-slate-200">
+                        <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-100 max-h-52 flex items-center justify-center">
+                          <div className="relative inline-block">
+                            <img
+                              src={fullPreviewUrl}
+                              alt="تحديد عمود الأسماء"
+                              className="max-h-52 w-auto block select-none"
+                            />
+                            {/* Dimmed left overlay */}
+                            <div
+                              className="absolute inset-y-0 left-0 bg-slate-950/55 pointer-events-none"
+                              style={{ width: `${cropLeftPct}%` }}
+                            />
+                            {/* Dimmed right overlay */}
+                            <div
+                              className="absolute inset-y-0 right-0 bg-slate-950/55 pointer-events-none"
+                              style={{ width: `${100 - cropRightPct}%` }}
+                            />
+                            {/* Highlight frame */}
+                            <div
+                              className="absolute inset-y-0 border-x-2 border-emerald-500 pointer-events-none"
+                              style={{
+                                left: `${cropLeftPct}%`,
+                                width: `${Math.max(0, cropRightPct - cropLeftPct)}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3" dir="ltr">
+                          <label className="text-[11px] text-slate-600 flex flex-col gap-1">
+                            <span className="text-right font-medium" dir="rtl">
+                              بداية العمود من اليسار ({cropLeftPct}%)
+                            </span>
+                            <input
+                              type="range"
+                              min={0}
+                              max={85}
+                              value={cropLeftPct}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setCropLeftPct(Math.min(val, cropRightPct - 15));
+                              }}
+                              className="accent-emerald-700"
+                            />
+                          </label>
+
+                          <label className="text-[11px] text-slate-600 flex flex-col gap-1">
+                            <span className="text-right font-medium" dir="rtl">
+                              نهاية العمود من اليمين ({cropRightPct}%)
+                            </span>
+                            <input
+                              type="range"
+                              min={15}
+                              max={100}
+                              value={cropRightPct}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setCropRightPct(Math.max(val, cropLeftPct + 15));
+                              }}
+                              className="accent-emerald-700"
+                            />
+                          </label>
+                        </div>
+
+                        <div className="flex items-center justify-end">
+                          <button
+                            type="button"
+                            disabled={extracting}
+                            onClick={handleReExtractCropped}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${extracting ? 'animate-spin' : ''}`} />
+                            <span>إعادة قراءة العمود المحدد</span>
+                          </button>
+                        </div>
+                      </div>
                     )}
-                    <span>
-                      {extracting
-                        ? ocrProgress !== null
-                          ? `جاري القراءة ${ocrProgress}%`
-                          : 'جاري القراءة...'
-                        : 'اختيار صورة'}
-                    </span>
-                  </button>
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -486,12 +630,12 @@ export function BulkStudentsImportModal({
             </div>
           )}
 
-          {/* Review & Edit Extracted List */}
+          {/* Review & Edit Filtered Arabic Names */}
           {draftRows.length > 0 && (
             <div className="border border-slate-200 rounded-xl overflow-hidden">
               <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
                 <span className="text-xs font-bold text-slate-800">
-                  الأسماء الجاهزة ({selectedValidRows.length} / {draftRows.length})
+                  الأسماء المصفّاة ({selectedValidRows.length} / {draftRows.length})
                 </span>
                 <button
                   type="button"
@@ -499,7 +643,7 @@ export function BulkStudentsImportModal({
                   className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:text-emerald-800"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>صف جديد</span>
+                  <span>إضافة اسم</span>
                 </button>
               </div>
 
@@ -507,11 +651,11 @@ export function BulkStudentsImportModal({
                 {draftRows.map((row, idx) => {
                   const isDup =
                     row.fullName.trim().length >= 2 &&
-                    existingNamesInTargetClass.has(normalizeNameForCompare(row.fullName));
+                    existingNamesInTargetClass.has(normalizeArabicForMatch(row.fullName));
                   return (
                     <div
                       key={row.rowKey}
-                      className={`p-2.5 flex items-center gap-2 ${
+                      className={`px-3 py-2 flex items-center gap-2 ${
                         row.selected ? 'bg-white' : 'bg-slate-50/70 opacity-65'
                       }`}
                     >
@@ -532,47 +676,20 @@ export function BulkStudentsImportModal({
                         {idx + 1}
                       </span>
 
-                      <div className="flex-1 grid grid-cols-1 sm:grid-cols-12 gap-1.5 min-w-0">
-                        <div className="sm:col-span-6 relative">
-                          <input
-                            type="text"
-                            maxLength={100}
-                            value={row.fullName}
-                            onChange={(e) =>
-                              updateRow(row.rowKey, { fullName: e.target.value })
-                            }
-                            placeholder="اسم الطالب"
-                            className="w-full px-2.5 py-1.5 text-xs font-medium border border-slate-200 rounded-md focus:outline-none focus:border-emerald-700"
-                          />
-                          {isDup && (
-                            <span className="inline-block mt-0.5 text-[10px] font-medium text-amber-700">
-                              موجود مسبقاً في الشعبة
-                            </span>
-                          )}
-                        </div>
-
+                      <div className="flex-1 min-w-0">
                         <input
                           type="text"
-                          maxLength={32}
-                          value={row.studentCode}
-                          onChange={(e) =>
-                            updateRow(row.rowKey, { studentCode: e.target.value })
-                          }
-                          placeholder="رمز تلقائي"
-                          className="sm:col-span-3 px-2 py-1.5 text-xs font-mono border border-slate-200 rounded-md focus:outline-none focus:border-emerald-700"
+                          maxLength={100}
+                          value={row.fullName}
+                          onChange={(e) => updateRow(row.rowKey, { fullName: e.target.value })}
+                          placeholder="اسم الطالب"
+                          className="w-full px-2.5 py-1.5 text-sm font-medium border border-slate-200 rounded-md focus:outline-none focus:border-emerald-700"
                         />
-
-                        <input
-                          type="tel"
-                          dir="ltr"
-                          maxLength={24}
-                          value={row.parentPhone}
-                          onChange={(e) =>
-                            updateRow(row.rowKey, { parentPhone: e.target.value })
-                          }
-                          placeholder="جوال (اختياري)"
-                          className="sm:col-span-3 px-2 py-1.5 text-xs font-mono text-left border border-slate-200 rounded-md focus:outline-none focus:border-emerald-700"
-                        />
+                        {isDup && (
+                          <span className="inline-block mt-0.5 text-[10px] font-medium text-amber-700">
+                            موجود مسبقاً في الشعبة
+                          </span>
+                        )}
                       </div>
 
                       <button
