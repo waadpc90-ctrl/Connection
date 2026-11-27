@@ -18,7 +18,7 @@ import {
   deleteGradeEntryAndSyncPass,
   pushInstantSummaryAlertToSection,
   saveClassGradesBatch,
-  updateSchoolSubjects,
+  updateStageSubjects,
 } from '../lib/wisaalService';
 import {
   AttendanceLog,
@@ -26,7 +26,7 @@ import {
   Classroom,
   FIELD_LIMITS,
   formatArabicDate,
-  getSchoolSubjects,
+  getStageSubjects,
   getTodayIso,
   GradeEntry,
   School,
@@ -66,18 +66,20 @@ export function GradesTab({
   onPreviewStagePortal,
   onNotify,
 }: GradesTabProps) {
-  const schoolSubjects = useMemo(() => getSchoolSubjects(school), [school]);
+  const stageSubjects = useMemo(() => getStageSubjects(school, stageId), [school, stageId]);
 
   const [subMode, setSubMode] = useState<GradeSubMode>('photo');
   const [selectedClassId, setSelectedClassId] = useState<string>(classrooms[0]?.id || '');
-  const [subject, setSubject] = useState<string>(() => getSchoolSubjects(school)[0]);
+  const [subject, setSubject] = useState<string>(() => getStageSubjects(school, stageId)[0]);
   const [customSubject, setCustomSubject] = useState<string>('');
   const [title, setTitle] = useState<string>('امتحان الشهر الأول');
   const [maxScore, setMaxScore] = useState<number>(100);
   const [date, setDate] = useState<string>(getTodayIso());
 
   const [editingSubjects, setEditingSubjects] = useState<boolean>(false);
-  const [draftSubjects, setDraftSubjects] = useState<string[]>(() => getSchoolSubjects(school));
+  const [draftSubjects, setDraftSubjects] = useState<string[]>(() =>
+    getStageSubjects(school, stageId)
+  );
   const [newSubjectName, setNewSubjectName] = useState<string>('');
   const [savingSubjects, setSavingSubjects] = useState<boolean>(false);
 
@@ -99,25 +101,31 @@ export function GradesTab({
   }, [classrooms, selectedClassId]);
 
   useEffect(() => {
-    if (!schoolSubjects.includes(subject)) {
-      setSubject(schoolSubjects[0]);
+    setEditingSubjects(false);
+    setNewSubjectName('');
+    setCustomSubject('');
+  }, [stageId]);
+
+  useEffect(() => {
+    if (!stageSubjects.includes(subject)) {
+      setSubject(stageSubjects[0]);
     }
-  }, [schoolSubjects, subject]);
+  }, [stageSubjects, subject]);
 
   const subjectOptions = useMemo(() => {
     const trimmedCustom = customSubject.trim();
-    if (trimmedCustom && !schoolSubjects.includes(trimmedCustom)) {
-      return [trimmedCustom, ...schoolSubjects];
+    if (trimmedCustom && !stageSubjects.includes(trimmedCustom)) {
+      return [trimmedCustom, ...stageSubjects];
     }
-    return schoolSubjects;
-  }, [schoolSubjects, customSubject]);
+    return stageSubjects;
+  }, [stageSubjects, customSubject]);
 
   const activeSubject = customSubject.trim() || subject;
   const activeClassroom = classrooms.find((c) => c.id === selectedClassId);
 
   const handleToggleSubjectsEditor = () => {
     if (!editingSubjects) {
-      setDraftSubjects([...schoolSubjects]);
+      setDraftSubjects([...stageSubjects]);
       setNewSubjectName('');
       setEditingSubjects(true);
     } else {
@@ -152,10 +160,10 @@ export function GradesTab({
       return;
     }
 
-    const selectedIdx = schoolSubjects.indexOf(subject);
+    const selectedIdx = stageSubjects.indexOf(subject);
     setSavingSubjects(true);
     try {
-      const saved = await updateSchoolSubjects(uid, validItems);
+      const saved = await updateStageSubjects(uid, school, stageId, validItems);
       const renamedCandidate =
         selectedIdx >= 0 && draftSubjects[selectedIdx]?.trim()
           ? draftSubjects[selectedIdx].trim()
@@ -169,7 +177,7 @@ export function GradesTab({
       }
       setNewSubjectName('');
       setEditingSubjects(false);
-      onNotify('success', 'تم حفظ المواد.');
+      onNotify('success', `تم حفظ مواد ${stageName}.`);
     } catch {
       onNotify('error', 'تعذر حفظ المواد.');
     } finally {
@@ -388,7 +396,7 @@ export function GradesTab({
                   value={activeSubject}
                   onChange={(e) => {
                     const nextVal = e.target.value;
-                    if (schoolSubjects.includes(nextVal)) {
+                    if (stageSubjects.includes(nextVal)) {
                       setSubject(nextVal);
                       setCustomSubject('');
                     } else {
@@ -453,7 +461,7 @@ export function GradesTab({
               <div className="p-4 rounded-xl bg-[#F7F8F7] border border-slate-200/80 space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold text-slate-900">
-                    تعديل المواد ({draftSubjects.length})
+                    تعديل مواد {stageName} ({draftSubjects.length})
                   </span>
                   <button
                     type="button"
@@ -558,7 +566,7 @@ export function GradesTab({
           sectionStudents={classStudents}
           onDetectedMetadata={(meta) => {
             if (meta.subject) {
-              if (schoolSubjects.includes(meta.subject)) {
+              if (stageSubjects.includes(meta.subject)) {
                 setSubject(meta.subject);
                 setCustomSubject('');
               } else {

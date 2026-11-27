@@ -133,6 +133,8 @@ export interface StaffMember {
   updatedAt?: unknown;
 }
 
+export type StageSubjectsMap = Record<StageId, string[]>;
+
 export interface School {
   id: string;
   ownerId: string;
@@ -143,6 +145,7 @@ export interface School {
   stageNames?: StageNamesMap;
   stageTokens?: StageTokensMap;
   subjects?: string[];
+  stageSubjects?: StageSubjectsMap;
   adminPinHash?: string;
   adminPinSalt?: string;
   createdAt?: unknown;
@@ -350,6 +353,32 @@ export function sanitizeSchoolSubjects(subjects?: string[] | null): string[] {
     if (cleaned.length >= FIELD_LIMITS.maxSchoolSubjects) break;
   }
   return cleaned.length > 0 ? cleaned : [...DEFAULT_SUBJECTS];
+}
+
+export function sanitizeStageSubjects(
+  stageSubjects?: Partial<StageSubjectsMap> | null,
+  fallbackSubjects?: string[] | null
+): StageSubjectsMap {
+  const fallback = sanitizeSchoolSubjects(fallbackSubjects);
+  return {
+    stage_1: Array.isArray(stageSubjects?.stage_1)
+      ? sanitizeSchoolSubjects(stageSubjects.stage_1)
+      : [...fallback],
+    stage_2: Array.isArray(stageSubjects?.stage_2)
+      ? sanitizeSchoolSubjects(stageSubjects.stage_2)
+      : [...fallback],
+    stage_3: Array.isArray(stageSubjects?.stage_3)
+      ? sanitizeSchoolSubjects(stageSubjects.stage_3)
+      : [...fallback],
+  };
+}
+
+export function getSchoolStageSubjectsMap(school?: School | null): StageSubjectsMap {
+  return sanitizeStageSubjects(school?.stageSubjects, school?.subjects);
+}
+
+export function getStageSubjects(school: School | null | undefined, stageId: StageId): string[] {
+  return getSchoolStageSubjectsMap(school)[stageId];
 }
 
 export function getSchoolSubjects(school?: School | null): string[] {

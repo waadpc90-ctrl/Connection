@@ -33,6 +33,7 @@ import {
   FIELD_LIMITS,
   formatArabicDate,
   getSchoolStageNames,
+  getSchoolStageSubjectsMap,
   getTodayIso,
   GradeEntry,
   PassAlert,
@@ -40,6 +41,7 @@ import {
   PassGradeItem,
   resolveClassroomStageId,
   sanitizeSchoolSubjects,
+  sanitizeStageSubjects,
   School,
   StaffMember,
   StaffRole,
@@ -49,6 +51,7 @@ import {
   StageId,
   StageNamesMap,
   StageSectionInfo,
+  StageSubjectsMap,
   StageTokensMap,
   Student,
   StudentPass,
@@ -1136,18 +1139,42 @@ export async function removeSchoolStaffMember(memberEmail: string): Promise<void
   }
 }
 
-export async function updateSchoolSubjects(
+export async function updateStageSubjects(
   uid: string,
+  school: School,
+  stageId: StageId,
   subjects: string[]
 ): Promise<string[]> {
   const path = `schools/${uid}`;
-  const cleanSubjects = sanitizeSchoolSubjects(subjects);
+  const currentMap = getSchoolStageSubjectsMap(school);
+  const cleanList = sanitizeSchoolSubjects(subjects);
+  const nextMap: StageSubjectsMap = {
+    ...currentMap,
+    [stageId]: cleanList,
+  };
   try {
     await updateDoc(doc(db, 'schools', uid), {
-      subjects: cleanSubjects,
+      stageSubjects: nextMap,
       updatedAt: serverTimestamp(),
     });
-    return cleanSubjects;
+    return cleanList;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function updateAllStageSubjects(
+  uid: string,
+  stageSubjects: StageSubjectsMap
+): Promise<StageSubjectsMap> {
+  const path = `schools/${uid}`;
+  const cleanMap = sanitizeStageSubjects(stageSubjects);
+  try {
+    await updateDoc(doc(db, 'schools', uid), {
+      stageSubjects: cleanMap,
+      updatedAt: serverTimestamp(),
+    });
+    return cleanMap;
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -1164,6 +1191,7 @@ export async function updateSchoolSettings(
     academicYear: string;
     stageNames: StageNamesMap;
     subjects?: string[];
+    stageSubjects?: StageSubjectsMap;
   }
 ): Promise<void> {
   const path = `schools/${uid}`;
@@ -1177,6 +1205,9 @@ export async function updateSchoolSettings(
     stage_3: sanitizeText(updates.stageNames.stage_3, FIELD_LIMITS.stage) || DEFAULT_STAGE_NAMES.stage_3,
   };
   const cleanSubjects = updates.subjects ? sanitizeSchoolSubjects(updates.subjects) : undefined;
+  const cleanStageSubjects = updates.stageSubjects
+    ? sanitizeStageSubjects(updates.stageSubjects)
+    : undefined;
 
   const classStageLookup = new Map(classrooms.map((c) => [c.id, resolveClassroomStageId(c)]));
 
@@ -1191,6 +1222,9 @@ export async function updateSchoolSettings(
     };
     if (cleanSubjects) {
       schoolUpdatePayload.subjects = cleanSubjects;
+    }
+    if (cleanStageSubjects) {
+      schoolUpdatePayload.stageSubjects = cleanStageSubjects;
     }
 
     await updateDoc(doc(db, 'schools', uid), schoolUpdatePayload);

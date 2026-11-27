@@ -135,6 +135,15 @@ service cloud.firestore {
         items[items.size() - 1].size() <= 80;
     }
 
+    function isValidStageSubjectsMap(m) {
+      return m is map &&
+        m.keys().hasAll(['stage_1', 'stage_2', 'stage_3']) &&
+        m.keys().hasOnly(['stage_1', 'stage_2', 'stage_3']) &&
+        isValidSubjectsList(m.stage_1) &&
+        isValidSubjectsList(m.stage_2) &&
+        isValidSubjectsList(m.stage_3);
+    }
+
     function isValidLatestAlert(alert) {
       return alert is map &&
         alert.keys().hasAll(['id', 'kind', 'title', 'body', 'createdAtIso']) &&
@@ -226,7 +235,7 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'ownerId', 'name', 'whatsappNumber', 'absenceAlertThreshold',
-          'academicYear', 'stageNames', 'stageTokens', 'subjects',
+          'academicYear', 'stageNames', 'stageTokens', 'subjects', 'stageSubjects',
           'adminPinHash', 'adminPinSalt', 'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.ownerId) &&
@@ -237,6 +246,7 @@ service cloud.firestore {
         (!('stageNames' in data) || isValidStageNamesMap(data.stageNames)) &&
         (!('stageTokens' in data) || isValidStageTokensMap(data.stageTokens)) &&
         (!('subjects' in data) || isValidSubjectsList(data.subjects)) &&
+        (!('stageSubjects' in data) || isValidStageSubjectsMap(data.stageSubjects)) &&
         (('adminPinHash' in data) == ('adminPinSalt' in data)) &&
         (!('adminPinHash' in data) || isValidHex64(data.adminPinHash)) &&
         (!('adminPinSalt' in data) || isValidHex32(data.adminPinSalt)) &&
@@ -561,12 +571,12 @@ service cloud.firestore {
             existing().ownerId == request.auth.uid &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'name', 'whatsappNumber', 'absenceAlertThreshold', 'academicYear',
-              'stageNames', 'stageTokens', 'subjects', 'adminPinHash', 'adminPinSalt', 'updatedAt'
+              'stageNames', 'stageTokens', 'subjects', 'stageSubjects', 'adminPinHash', 'adminPinSalt', 'updatedAt'
             ])
           ) ||
           (
             isSchoolStaff(schoolId) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['subjects', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['subjects', 'stageSubjects', 'updatedAt'])
           )
         );
 
